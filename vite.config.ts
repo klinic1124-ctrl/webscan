@@ -49,6 +49,9 @@ export default defineConfig({
   define: { __BUILD_ID__: JSON.stringify(buildId()) },
   base: './',
   worker: { format: 'es' },
+  // Emit non-ASCII characters as \u escapes: some hosts reject bundles that
+  // contain literal U+FFFD (pdf-lib uses one in a string).
+  esbuild: { charset: 'ascii' },
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 12000,
