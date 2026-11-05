@@ -4,6 +4,15 @@
 
 - 개발 계획서: [`docs/scanner-plan.html`](docs/scanner-plan.html)
 - 0단계 검증 보고서: [`docs/phase0.md`](docs/phase0.md)
+- 1단계(MVP) 기록: [`docs/phase1.md`](docs/phase1.md)
+
+## 기능
+
+- 촬영 또는 사진 불러오기(여러 장 한꺼번에 가능) → 문서 영역 자동 검출 → 꼭짓점 미세 조정
+- 원근 보정, 그림자 · 조명 얼룩 제거, 컬러 / 회색조 / 흑백 / 사진 모드
+- 여러 페이지 문서: 순서 변경, 삭제, 다시 맞추기(원본 사진을 보관하므로 화질 손실 없음)
+- PDF(자동 · A4 · Letter) 또는 이미지로 공유 · 저장
+- 기기 안 보관함(IndexedDB), 홈 화면 설치, 오프라인 동작
 
 ## 실행
 
@@ -23,8 +32,14 @@ npm run build      # dist/ 에 정적 파일 생성 → 아무 정적 호스팅�
 
 ```
 src/
-  App.tsx                    화면 (가져오기 → 영역 맞추기 → 결과 → 측정)
+  App.tsx                    화면 전환 (보관함 → 문서 → 편집), 불러오기 흐름
+  components/Library.tsx     보관함, 새 스캔
+  components/DocumentView.tsx 페이지 목록, 순서, PDF · 이미지 내보내기
+  components/Editor.tsx      영역 맞추기, 모드, 미리보기, 저장
   components/CropEditor.tsx  꼭짓점/변 핸들, 돋보기
+  components/Metrics.tsx     측정 패널 (개발용)
+  lib/store.ts               IndexedDB 보관함
+  lib/pdf.ts                 PDF 생성 (pdf-lib)
   scanner.ts                 워커 클라이언트, 사진 해독
   worker/scanner.worker.ts   OpenCV 처리 워커 (Comlink)
   lib/geometry.ts            순수 기하 계산 (꼭짓점 정렬, 직선 맞춤, 종횡비 추정)
