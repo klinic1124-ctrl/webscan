@@ -1,0 +1,453 @@
+<title>웹 문서 스캐너 개발 계획서</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 단일 읽기 칼럼(최대 860px) + 섹션별 표/흐름도. 표지는 스캔 크롭 마크(코너 핸들) 모티프. */
+:root {
+  --paper: #f7f8f8;
+  --sheet: #ffffff;
+  --ink: #1b2326;
+  --ink-2: #4c585d;
+  --rule: #d9dfe1;
+  --scan: #0f7f86;          /* 스캐너 램프 청록 */
+  --scan-soft: #e3f2f2;
+  --mark: #c2410c;          /* 크롭 마크/주의 */
+  --mark-soft: #fbece4;
+  --ok: #2f7a3b;
+  --f-display: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #12181a; --sheet: #182124; --ink: #e4ebec; --ink-2: #a3b1b5; --rule: #2c393d;
+    --scan: #4fc3c9; --scan-soft: #173236; --mark: #f08a5d; --mark-soft: #3a2219; --ok: #74c486;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #12181a; --sheet: #182124; --ink: #e4ebec; --ink-2: #a3b1b5; --rule: #2c393d;
+  --scan: #4fc3c9; --scan-soft: #173236; --mark: #f08a5d; --mark-soft: #3a2219; --ok: #74c486;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink);
+  font-family: var(--f-body); font-size: 16px; line-height: 1.72;
+  word-break: keep-all; overflow-wrap: anywhere;
+}
+.wrap {
+  max-width: 860px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+  display: flex; flex-direction: column; gap: 56px;
+}
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: clamp(28px, 5vw, 40px); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 24px; font-weight: 700; display: flex; align-items: baseline; gap: 12px; }
+h2 .no { font-family: var(--f-mono); font-size: 14px; color: var(--scan); font-weight: 500; }
+h3 { font-size: 18px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+section { display: flex; flex-direction: column; gap: 18px; }
+.label {
+  font-family: var(--f-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2);
+}
+code, .mono { font-family: var(--f-mono); font-size: 0.88em; }
+code { background: var(--scan-soft); padding: 1px 5px; border-radius: 3px; }
+ul { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; }
+li { max-width: 68ch; }
+strong { font-weight: 600; }
+
+/* 표지: 크롭 마크 */
+.cover {
+  position: relative; background: var(--sheet); padding: 40px clamp(20px, 5vw, 48px);
+  display: flex; flex-direction: column; gap: 18px;
+}
+.cover::before, .cover::after, .cover .c3, .cover .c4 {
+  content: ""; position: absolute; width: 22px; height: 22px; border: 0 solid var(--mark);
+}
+.cover::before { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px; }
+.cover::after { bottom: 0; right: 0; border-bottom-width: 3px; border-right-width: 3px; }
+.cover .c3 { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px; }
+.cover .c4 { bottom: 0; left: 0; border-bottom-width: 3px; border-left-width: 3px; }
+.cover .lead { font-size: 18px; color: var(--ink-2); }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 24px; font-family: var(--f-mono); font-size: 13px; color: var(--ink-2); }
+.meta b { color: var(--ink); font-weight: 500; }
+
+/* 결론 박스 */
+.verdict {
+  border-left: 3px solid var(--scan); background: var(--scan-soft); padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.verdict p { max-width: none; }
+
+/* 표 */
+.tbl { overflow-x: auto; border: 1px solid var(--rule); background: var(--sheet); }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--rule); }
+th { font-weight: 600; background: var(--paper); font-size: 13.5px; }
+tr:last-child td { border-bottom: 0; }
+td.pick { color: var(--scan); font-weight: 600; }
+.pill { display: inline-block; font-family: var(--f-mono); font-size: 11.5px; padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
+.pill.p1 { background: var(--scan-soft); color: var(--scan); }
+.pill.p2 { background: var(--mark-soft); color: var(--mark); }
+.pill.p3 { background: var(--paper); color: var(--ink-2); border: 1px solid var(--rule); }
+
+/* 파이프라인 */
+.pipe { display: flex; flex-direction: column; gap: 0; background: var(--sheet); border: 1px solid var(--rule); }
+.step { display: grid; grid-template-columns: 56px 1fr; border-bottom: 1px solid var(--rule); }
+.step:last-child { border-bottom: 0; }
+.step .n {
+  font-family: var(--f-mono); font-size: 13px; color: var(--scan); padding: 16px 0 0 16px;
+  border-right: 1px dashed var(--rule);
+}
+.step .b { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.step .b p { font-size: 15px; color: var(--ink-2); }
+.step .b .algo { font-family: var(--f-mono); font-size: 12.5px; color: var(--ink); background: var(--paper); padding: 6px 10px; overflow-x: auto; white-space: nowrap; }
+.step.manual { background: var(--mark-soft); }
+.step.manual .n { color: var(--mark); }
+
+/* 2열 카드 */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.card { background: var(--sheet); border: 1px solid var(--rule); padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.card p, .card li { font-size: 15px; color: var(--ink-2); }
+
+/* 아키텍처 다이어그램 */
+.arch { overflow-x: auto; background: var(--sheet); border: 1px solid var(--rule); padding: 20px; }
+.arch svg { display: block; min-width: 640px; width: 100%; height: auto; }
+.arch text { font-family: var(--f-body); fill: var(--ink); }
+.arch .sm { font-size: 11px; fill: var(--ink-2); font-family: var(--f-mono); }
+.arch .box { fill: var(--paper); stroke: var(--rule); }
+.arch .box.hi { fill: var(--scan-soft); stroke: var(--scan); }
+.arch .ln { stroke: var(--ink-2); stroke-width: 1.4; fill: none; }
+.arch .ar { fill: var(--ink-2); }
+
+/* 로드맵 */
+.road { display: flex; flex-direction: column; gap: 14px; }
+.phase { display: grid; grid-template-columns: 150px 1fr; gap: 16px; background: var(--sheet); border: 1px solid var(--rule); padding: 18px 20px; }
+.phase .when { display: flex; flex-direction: column; gap: 4px; }
+.phase .when b { font-family: var(--f-display); font-size: 17px; }
+.phase .when span { font-family: var(--f-mono); font-size: 12.5px; color: var(--ink-2); }
+.phase ul { font-size: 15px; }
+.phase .done { font-size: 14px; color: var(--ok); margin-top: 8px; }
+@media (max-width: 560px) {
+  .phase { grid-template-columns: 1fr; gap: 8px; }
+  .step { grid-template-columns: 40px 1fr; }
+  .step .n { padding-left: 10px; }
+}
+
+/* 결정 사항 */
+.qs { counter-reset: q; display: flex; flex-direction: column; gap: 10px; padding: 0; list-style: none; }
+.qs li { background: var(--sheet); border: 1px solid var(--rule); padding: 12px 16px; max-width: none; font-size: 15px; }
+.qs li b { display: block; margin-bottom: 2px; }
+.foot { font-size: 13px; color: var(--ink-2); font-family: var(--f-mono); border-top: 1px solid var(--rule); padding-top: 16px; }
+</style>
+
+<div class="wrap">
+
+  <header class="cover">
+    <span class="c3"></span><span class="c4"></span>
+    <span class="label">개발 계획서 · v0.1 초안</span>
+    <h1>웹 문서 스캐너 개발 계획서</h1>
+    <p class="lead">휴대폰 카메라로 찍은 문서·그림·사진을 평판 스캐너로 스캔한 것처럼 바꿔 주는 모바일 웹 앱. 문서 영역 자동 검출과 사람의 최종 미세 조정, 원근 왜곡 보정, 그림자·반사광 등 명암 불균일 제거를 거쳐 이미지 또는 PDF로 저장합니다.</p>
+    <div class="meta">
+      <span>작성일 <b>2026-11-05</b></span>
+      <span>대상 <b>iOS Safari · Android Chrome · 데스크톱</b></span>
+      <span>형태 <b>PWA (설치형 웹앱)</b></span>
+    </div>
+  </header>
+
+  <section>
+    <h2><span class="no">요약</span>핵심 결정</h2>
+    <div class="verdict">
+      <p><strong>권장 방향:</strong> 서버 없이 브라우저 안에서 모든 영상 처리를 수행하는 <strong>PWA</strong>로 개발합니다. 처리 엔진은 <strong>OpenCV.js(WebAssembly)</strong>를 Web Worker에서 돌리고, UI는 <strong>React + TypeScript + Vite</strong>로 만듭니다. PDF는 <strong>pdf-lib</strong>로 브라우저에서 직접 생성합니다.</p>
+      <p><strong>이유:</strong> 사진이 기기 밖으로 나가지 않아 개인정보 부담이 없고, 서버 비용이 들지 않으며, 오프라인에서도 동작합니다. 앱스토어 배포가 필요해지면 같은 코드를 <strong>Capacitor</strong>로 감싸 iOS/Android 앱으로 낼 수 있습니다.</p>
+      <p><strong>범위 주의:</strong> 그림자·조명 얼룩 제거는 단일 사진으로 안정적으로 해결됩니다. 그러나 광택지의 강한 <strong>반사광(글레어)</strong>은 해당 부분의 정보가 사진에 아예 없기 때문에 한 장으로는 완전히 복원할 수 없습니다. 각도를 바꿔 2~3장을 찍어 합성하는 기능을 2단계에 넣는 것을 권장합니다.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">01</span>목표와 요구사항</h2>
+    <div class="tbl"><table>
+      <thead><tr><th style="width:30%">기능</th><th>내용</th><th style="width:90px">우선순위</th></tr></thead>
+      <tbody>
+        <tr><td>촬영 / 불러오기</td><td>카메라 촬영(기기 기본 카메라 최대 해상도), 갤러리 사진 불러오기, 여러 장 연속 촬영</td><td><span class="pill p1">MVP</span></td></tr>
+        <tr><td>문서 영역 자동 검출</td><td>사진에서 종이의 네 꼭짓점을 자동으로 찾아 미리 표시</td><td><span class="pill p1">MVP</span></td></tr>
+        <tr><td>수동 미세 조정</td><td>꼭짓점·변 드래그, 확대 돋보기, 회전(90°), 전체 영역 선택 버튼</td><td><span class="pill p1">MVP</span></td></tr>
+        <tr><td>원근 왜곡 보정</td><td>기울게 찍힌 사진을 정면에서 본 직사각형으로 펴기, 용지 비율(A4, Letter, 명함, 자유) 지정</td><td><span class="pill p1">MVP</span></td></tr>
+        <tr><td>명암·그림자 제거</td><td>조명 얼룩, 손·휴대폰 그림자, 비네팅 제거 후 종이 배경을 흰색으로</td><td><span class="pill p1">MVP</span></td></tr>
+        <tr><td>출력 모드</td><td>컬러 문서 / 회색조 / 흑백(텍스트) / 사진·그림(색 보존)</td><td><span class="pill p1">MVP</span></td></tr>
+        <tr><td>저장</td><td>JPEG·PNG 저장, 여러 페이지 PDF, 공유 시트로 내보내기</td><td><span class="pill p1">MVP</span></td></tr>
+        <tr><td>실시간 검출 미리보기</td><td>카메라 화면 위에 검출된 문서 테두리 표시, 안정되면 자동 촬영</td><td><span class="pill p2">2단계</span></td></tr>
+        <tr><td>반사광 제거(다중 촬영)</td><td>각도를 바꿔 찍은 2~3장을 정합해 반사 부분을 합성으로 메움</td><td><span class="pill p2">2단계</span></td></tr>
+        <tr><td>딥러닝 경계 검출</td><td>배경과 종이 색이 비슷하거나 테두리가 가려질 때를 위한 보조 모델</td><td><span class="pill p2">2단계</span></td></tr>
+        <tr><td>책 곡면 펴기</td><td>펼친 책의 휘어진 페이지 평탄화(dewarping)</td><td><span class="pill p3">3단계</span></td></tr>
+        <tr><td>OCR · 검색 가능 PDF</td><td>Tesseract.js로 한글/영문 텍스트 레이어 추가</td><td><span class="pill p3">3단계</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="no">02</span>플랫폼 검토</h2>
+    <p>"모바일에서 웹 등으로 구동"이라는 조건을 기준으로 네 가지 방식을 비교했습니다.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>방식</th><th>장점</th><th>단점</th><th>판단</th></tr></thead>
+      <tbody>
+        <tr><td><strong>PWA + 브라우저 내 처리</strong><br><span class="mono">OpenCV.js / WASM</span></td><td>설치 없이 링크로 실행, 홈 화면 추가 가능, 오프라인 동작, 서버 비용 0, 사진이 기기 밖으로 안 나감</td><td>WASM 초기 다운로드(약 3~8MB, 캐시 후 0), iOS 메모리 제한, 일부 카메라 제어(초점·플래시) 제한</td><td class="pick">채택</td></tr>
+        <tr><td>웹 + 서버 처리<br><span class="mono">Python · OpenCV</span></td><td>무거운 모델 사용 쉬움, 클라이언트 단순</td><td>업로드 지연(12MP 사진 3~5MB), 서버 비용, 개인정보 처리 의무, 오프라인 불가</td><td>보조 옵션 (고급 기능만 선택적으로)</td></tr>
+        <tr><td>하이브리드 앱<br><span class="mono">Capacitor</span></td><td>PWA 코드 재사용, 앱스토어 배포, 네이티브 카메라·파일 저장 접근</td><td>스토어 심사, 빌드 파이프라인 추가</td><td>3단계에서 확장</td></tr>
+        <tr><td>네이티브 앱<br><span class="mono">Swift · Kotlin</span></td><td>최고 성능, iOS VisionKit / ML Kit 문서 스캐너 활용</td><td>플랫폼별 두 벌 개발, 웹 구동 불가</td><td>요구사항과 맞지 않음</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="no">03</span>영상 처리 파이프라인</h2>
+    <p>검출과 분석은 축소본(긴 변 약 1,000px)에서 빠르게 하고, 결과 좌표를 원본 해상도에 적용해 최종 이미지를 만듭니다. 주황색 단계는 사용자가 개입하는 지점입니다.</p>
+    <div class="pipe">
+      <div class="step"><div class="n">S1</div><div class="b">
+        <h3>입력과 정규화</h3>
+        <p>EXIF 방향 보정, 긴 변 4,000px 상한으로 리사이즈(iOS 캔버스 면적 한도 약 16.7M 픽셀 대비 여유 확보), 분석용 축소본 생성.</p>
+        <div class="algo">createImageBitmap(file, {imageOrientation:'from-image'}) → resize → gray(1000px)</div>
+      </div></div>
+      <div class="step"><div class="n">S2</div><div class="b">
+        <h3>문서 경계 검출</h3>
+        <p>여러 후보를 만들고 점수로 고릅니다. 후보는 엣지 기반과 색 분할 기반 두 경로로 생성하고, 면적 비율·볼록성·꼭짓점 각도(60~120°)·대변 길이 비율로 점수를 매깁니다. 실패하면 이미지 전체를 기본값으로 둡니다.</p>
+        <div class="algo">GaussianBlur → Canny(자동 임계값: 중앙값 ±33%) → morphologyEx(CLOSE) → findContours → approxPolyDP(ε=2% 둘레) → 4점 후보 점수화</div>
+        <div class="algo">보조: LAB 변환 → k-means(2) 또는 GrabCut으로 종이 영역 → minAreaRect / 꼭짓점 정제(cornerSubPix)</div>
+      </div></div>
+      <div class="step manual"><div class="n">S3</div><div class="b">
+        <h3>사람의 미세 조정</h3>
+        <p>네 꼭짓점과 네 변 중앙에 핸들을 둡니다. 손가락이 꼭짓점을 가리므로 드래그 중에는 손가락 위쪽에 3배 확대 돋보기를 띄웁니다. 핸들 근처의 강한 엣지 교차점으로 살짝 끌어당기는 스냅, 오목한 사각형 경고, 되돌리기를 제공합니다.</p>
+      </div></div>
+      <div class="step"><div class="n">S4</div><div class="b">
+        <h3>원근 보정</h3>
+        <p>네 점으로 호모그래피를 구해 원본 해상도에서 펼칩니다. 출력 비율은 용지 프리셋을 쓰거나, 자유 모드에서는 카메라 초점거리 추정으로 실제 종횡비를 계산합니다(Zhang &amp; He 화이트보드 정류 방식). 단순히 변 길이로 계산하면 비스듬히 찍은 문서가 눌려 보이기 때문입니다.</p>
+        <div class="algo">getPerspectiveTransform(src4, dst4) → warpPerspective(INTER_CUBIC, BORDER_REPLICATE)</div>
+      </div></div>
+      <div class="step"><div class="n">S5</div><div class="b">
+        <h3>조명 균일화 (그림자·얼룩 제거)</h3>
+        <p>종이 배경의 밝기 분포를 추정한 뒤 원본을 배경으로 나눠 평탄하게 만듭니다. 글자처럼 가는 획은 큰 커널의 닫힘 연산에서 지워지므로 배경만 남습니다. 컬러는 LAB의 L 채널에만 적용해 색이 틀어지지 않게 합니다.</p>
+        <div class="algo">L 채널 → 축소 → morphologyEx(CLOSE, 커널≈문서폭/30) → medianBlur → 확대 = 배경 B → L' = L / B × 255</div>
+      </div></div>
+      <div class="step"><div class="n">S6</div><div class="b">
+        <h3>반사광(글레어) 처리</h3>
+        <p>밝기가 포화되고 채도가 낮은 영역을 반사광으로 판정해 마스크를 만듭니다. 단일 사진에서는 작은 반사만 주변으로 메우고(inpaint), 큰 반사는 사용자에게 "다른 각도로 한 장 더"를 안내합니다. 다중 촬영 모드에서는 각 사진을 같은 평면으로 정합한 뒤 픽셀별로 반사가 없는 쪽 값을 고릅니다.</p>
+        <div class="algo">mask = (V &gt; 245) ∧ (S &lt; 25) → dilate → 단일: inpaint(TELEA) · 다중: ORB 특징 → findHomography(RANSAC) → 픽셀별 최소 밝기/가중 합성</div>
+      </div></div>
+      <div class="step"><div class="n">S7</div><div class="b">
+        <h3>모드별 마무리</h3>
+        <p><strong>컬러 문서:</strong> 종이 픽셀 기준 화이트밸런스, 흰색 클리핑, 약한 언샤프 마스크. <strong>흑백:</strong> Sauvola 적응형 이진화, 잡점 제거. <strong>사진·그림:</strong> S5를 약하게만 적용하고 색과 계조를 보존, 자동 레벨만 조정. 자동 모드는 채도·엣지 밀도로 문서/사진을 판별합니다.</p>
+      </div></div>
+      <div class="step manual"><div class="n">S8</div><div class="b">
+        <h3>검토와 내보내기</h3>
+        <p>모드 전환과 밝기·대비 슬라이더로 결과를 확인하고, 페이지 순서를 바꾼 뒤 이미지나 PDF로 저장합니다.</p>
+      </div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">04</span>시스템 구조</h2>
+    <p>무거운 영상 처리는 모두 Web Worker로 보내 UI가 멈추지 않게 합니다. 데이터는 기기 안의 IndexedDB에만 저장합니다.</p>
+    <div class="arch">
+      <svg viewBox="0 0 760 330" role="img" aria-label="시스템 구조: UI 스레드, 처리 워커, 저장소, 출력">
+        <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ar" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <text x="20" y="24" class="sm">메인 스레드 (UI)</text>
+        <rect class="box" x="20" y="34" width="210" height="52" rx="4"/>
+        <text x="36" y="58" font-size="14" font-weight="600">촬영 / 불러오기</text>
+        <text x="36" y="76" class="sm">input capture · getUserMedia</text>
+        <rect class="box" x="20" y="102" width="210" height="52" rx="4"/>
+        <text x="36" y="126" font-size="14" font-weight="600">크롭 편집기</text>
+        <text x="36" y="144" class="sm">Canvas · Pointer Events</text>
+        <rect class="box" x="20" y="170" width="210" height="52" rx="4"/>
+        <text x="36" y="194" font-size="14" font-weight="600">페이지 목록 · 미리보기</text>
+        <text x="36" y="212" class="sm">React · Zustand</text>
+        <rect class="box" x="20" y="238" width="210" height="52" rx="4"/>
+        <text x="36" y="262" font-size="14" font-weight="600">내보내기</text>
+        <text x="36" y="280" class="sm">pdf-lib · Web Share API</text>
+
+        <text x="300" y="24" class="sm">처리 워커 (Web Worker)</text>
+        <rect class="box hi" x="300" y="34" width="210" height="256" rx="4"/>
+        <text x="316" y="62" font-size="14" font-weight="600">OpenCV.js (WASM SIMD)</text>
+        <text x="316" y="90" class="sm">detectQuad(img) → 4점</text>
+        <text x="316" y="114" class="sm">warp(img, quad, size)</text>
+        <text x="316" y="138" class="sm">flattenLight(img)</text>
+        <text x="316" y="162" class="sm">removeGlare(imgs[])</text>
+        <text x="316" y="186" class="sm">finish(img, mode)</text>
+        <text x="316" y="222" class="sm">OffscreenCanvas</text>
+        <text x="316" y="246" class="sm">ImageBitmap 전송(복사 없음)</text>
+        <text x="316" y="270" class="sm">2단계: ONNX Runtime Web</text>
+
+        <text x="580" y="24" class="sm">기기 내 저장</text>
+        <rect class="box" x="580" y="34" width="160" height="80" rx="4"/>
+        <text x="596" y="60" font-size="14" font-weight="600">IndexedDB</text>
+        <text x="596" y="80" class="sm">원본 · 꼭짓점 · 설정</text>
+        <text x="596" y="98" class="sm">결과 이미지 (Dexie)</text>
+        <rect class="box" x="580" y="138" width="160" height="80" rx="4"/>
+        <text x="596" y="164" font-size="14" font-weight="600">Service Worker</text>
+        <text x="596" y="184" class="sm">앱·WASM 캐시</text>
+        <text x="596" y="202" class="sm">오프라인 (Workbox)</text>
+        <rect class="box" x="580" y="238" width="160" height="52" rx="4"/>
+        <text x="596" y="262" font-size="14" font-weight="600">파일 / 공유 시트</text>
+        <text x="596" y="280" class="sm">JPG · PNG · PDF</text>
+
+        <path class="ln" d="M230 60 H300" marker-end="url(#ah)"/>
+        <path class="ln" d="M300 128 H230" marker-end="url(#ah)"/>
+        <path class="ln" d="M230 196 H300" marker-end="url(#ah)"/>
+        <path class="ln" d="M510 74 H580" marker-end="url(#ah)"/>
+        <path class="ln" d="M230 264 H580" marker-end="url(#ah)"/>
+        <text x="240" y="52" class="sm">원본</text>
+        <text x="240" y="122" class="sm">4점</text>
+        <text x="240" y="190" class="sm">조정값</text>
+      </svg>
+    </div>
+    <p>처리 원본과 사용자가 조정한 꼭짓점·모드를 함께 저장하므로, 나중에 다시 열어도 원본에서 재처리할 수 있습니다(비파괴 편집).</p>
+  </section>
+
+  <section>
+    <h2><span class="no">05</span>기술 스택</h2>
+    <div class="tbl"><table>
+      <thead><tr><th style="width:28%">영역</th><th>선택</th><th>비고</th></tr></thead>
+      <tbody>
+        <tr><td>언어 · 빌드</td><td>TypeScript, Vite</td><td>워커 번들링, WASM 자산 처리 간편</td></tr>
+        <tr><td>UI</td><td>React 18, Zustand, CSS Modules</td><td>Svelte도 가능. 팀 숙련도 기준으로 결정</td></tr>
+        <tr><td>영상 처리</td><td>OpenCV.js 4.x 맞춤 빌드</td><td>core·imgproc·features2d·photo만 포함해 크기 축소, SIMD·threads 빌드</td></tr>
+        <tr><td>워커 통신</td><td>Comlink</td><td>워커 함수를 비동기 함수처럼 호출</td></tr>
+        <tr><td>PDF</td><td>pdf-lib</td><td>JPEG 그대로 삽입(재압축 없음), 페이지 크기 mm 지정</td></tr>
+        <tr><td>저장</td><td>IndexedDB (Dexie)</td><td>대용량 Blob 저장. iOS 7일 미사용 시 삭제 정책 대비 내보내기 안내</td></tr>
+        <tr><td>PWA</td><td>vite-plugin-pwa (Workbox)</td><td>manifest, 오프라인 캐시, 홈 화면 설치</td></tr>
+        <tr><td>2단계 ML</td><td>ONNX Runtime Web (WebGPU/WASM)</td><td>경량 문서 분할 모델(1~3MB, 256px 입력)</td></tr>
+        <tr><td>3단계 OCR</td><td>Tesseract.js (kor+eng)</td><td>언어 데이터 지연 로딩</td></tr>
+        <tr><td>테스트</td><td>Vitest, Playwright</td><td>알고리즘 회귀 테스트는 이미지 세트 기반</td></tr>
+        <tr><td>배포</td><td>정적 호스팅 (Cloudflare Pages / Vercel)</td><td>카메라 사용을 위해 HTTPS 필수, WASM threads용 COOP/COEP 헤더</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="no">06</span>화면 흐름</h2>
+    <div class="grid2">
+      <div class="card">
+        <span class="label">1 · 촬영</span>
+        <p>큰 촬영 버튼, 갤러리 버튼. MVP는 <code>&lt;input type="file" capture="environment"&gt;</code>로 기기 기본 카메라를 열어 최대 해상도와 자동 초점을 그대로 활용합니다. 2단계에서 실시간 테두리 표시 카메라 화면을 추가합니다.</p>
+      </div>
+      <div class="card">
+        <span class="label">2 · 영역 조정</span>
+        <p>자동 검출된 사각형이 표시된 상태로 열립니다. 꼭짓점 드래그 + 돋보기, 회전, "전체 선택", 용지 비율 선택. 확인을 누르면 펼쳐진 결과로 넘어갑니다.</p>
+      </div>
+      <div class="card">
+        <span class="label">3 · 보정 결과</span>
+        <p>모드 칩(자동 · 컬러 · 회색 · 흑백 · 사진)과 원본 비교 토글. 반사가 감지되면 "다른 각도로 한 장 더 찍기" 안내가 뜹니다.</p>
+      </div>
+      <div class="card">
+        <span class="label">4 · 페이지와 저장</span>
+        <p>썸네일 목록에서 순서 변경·삭제·다시 자르기. 저장 형식(JPG / PNG / PDF), 품질(표준 150dpi / 고화질 300dpi), 파일 이름을 고르고 공유 시트로 저장합니다.</p>
+      </div>
+    </div>
+    <p>참고로 A4(210×297mm)를 300dpi로 출력하면 2,480×3,508px이 필요합니다. 12MP 휴대폰 사진에서 문서가 화면의 70% 정도를 차지하면 약 250~300dpi에 해당하므로, 업스케일 없이 원본 해상도를 최대한 살리는 것이 중요합니다.</p>
+  </section>
+
+  <section>
+    <h2><span class="no">07</span>개발 로드맵</h2>
+    <p>개발자 1명 기준 추정입니다. 2명이면 UI와 처리 엔진을 병행해 약 30% 단축할 수 있습니다.</p>
+    <div class="road">
+      <div class="phase">
+        <div class="when"><b>0단계 · 검증</b><span>1~2주</span></div>
+        <div>
+          <ul>
+            <li>OpenCV.js 맞춤 빌드, Worker 구동, iPhone·중급 Android 실기기 처리 시간 측정</li>
+            <li>S2 검출 + S4 펼치기 + S5 조명 균일화 프로토타입</li>
+            <li>테스트 사진 100장 수집(책상·손에 든 문서·영수증·그림·광택 사진)</li>
+          </ul>
+          <p class="done">완료 기준: 실기기에서 1장 처리 2초 이내, 검출 성공률 측정치 확보</p>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="when"><b>1단계 · MVP</b><span>4~5주</span></div>
+        <div>
+          <ul>
+            <li>촬영/불러오기, 크롭 편집기(돋보기·스냅·되돌리기)</li>
+            <li>파이프라인 S1~S5, S7 전체, 출력 모드 4종</li>
+            <li>여러 페이지 관리, JPG/PNG/PDF 내보내기, IndexedDB 보관함</li>
+            <li>PWA 설치·오프라인, HTTPS 배포</li>
+          </ul>
+          <p class="done">완료 기준: 테스트 세트에서 자동 검출 후 수정 없이 통과 80% 이상, 그림자 있는 문서의 배경 밝기 편차 5% 이내</p>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="when"><b>2단계 · 품질</b><span>4주</span></div>
+        <div>
+          <ul>
+            <li>실시간 카메라 미리보기와 테두리 표시, 안정 시 자동 촬영</li>
+            <li>반사광 감지·안내, 다중 촬영 합성</li>
+            <li>딥러닝 경계 검출 보조(어려운 배경 대응)</li>
+            <li>자유 비율 모드의 종횡비 추정</li>
+          </ul>
+          <p class="done">완료 기준: 자동 검출 통과율 90% 이상, 광택 사진 반사 영역 체감 제거</p>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="when"><b>3단계 · 확장</b><span>선택</span></div>
+        <div>
+          <ul>
+            <li>OCR 검색 가능 PDF(한글·영문)</li>
+            <li>책 곡면 펴기</li>
+            <li>Capacitor로 iOS/Android 스토어 배포, 클라우드 드라이브 연동</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">08</span>품질 측정</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>정확도</h3>
+        <ul>
+          <li>꼭짓점 검출: 정답 사각형 대비 IoU 0.9 이상 비율</li>
+          <li>사용자 수정률: 크롭 화면에서 핸들을 움직인 비율(앱 내 익명 통계, 선택 동의)</li>
+          <li>공개 데이터셋 SmartDoc 2015로 기준선 비교</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>성능 · 결과물</h3>
+        <ul>
+          <li>처리 시간: 중급 Android에서 1장 1.5초, 최초 실행 WASM 로딩 3초 이내</li>
+          <li>조명 균일도: 처리 후 종이 배경 밝기 표준편차</li>
+          <li>PDF 용량: A4 컬러 1페이지 150dpi 기준 500KB 이하</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">09</span>위험 요소와 대응</h2>
+    <div class="tbl"><table>
+      <thead><tr><th style="width:32%">위험</th><th>대응</th></tr></thead>
+      <tbody>
+        <tr><td>iOS Safari 메모리 한도로 탭이 강제 종료</td><td>입력 상한 4,000px, OpenCV <code>Mat.delete()</code> 철저 관리(래퍼로 자동 해제), 페이지 결과는 즉시 Blob으로 IndexedDB에 저장 후 메모리 해제</td></tr>
+        <tr><td>흰 책상 위 흰 종이 등 저대비 배경에서 검출 실패</td><td>색 분할 후보 경로 추가, 2단계 딥러닝 보조, 촬영 화면에 "어두운 배경 위에 놓으면 더 정확합니다" 안내</td></tr>
+        <tr><td>강한 반사광은 단일 사진으로 복원 불가</td><td>반사 감지 시 재촬영·다중 촬영 유도. 기대치를 화면 문구로 명확히 전달</td></tr>
+        <tr><td>OpenCV.js 용량이 커 첫 실행이 느림</td><td>필요 모듈만 맞춤 빌드, 첫 화면 표시 후 백그라운드 로딩, Service Worker 캐시</td></tr>
+        <tr><td>iOS PWA에서 파일 저장 경로가 제한적</td><td>Web Share API로 공유 시트 호출 → "파일에 저장"/"사진에 저장" 선택. 미지원 시 다운로드 링크 폴백</td></tr>
+        <tr><td>iOS가 사용하지 않은 웹앱 저장소를 정리</td><td>보관함은 임시 저장 용도로 안내, 홈 화면 설치 권장, <code>navigator.storage.persist()</code> 요청</td></tr>
+        <tr><td>그림·사진 모드에서 과보정으로 색이 바램</td><td>모드별 보정 강도 분리, 자동 판별 + 사용자 전환, 원본 비교 토글</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="no">10</span>결정이 필요한 사항</h2>
+    <ul class="qs">
+      <li><b>앱스토어 배포 필요 여부</b>웹 링크만으로 충분한지, 1단계부터 Capacitor 앱도 함께 낼지에 따라 일정이 1~2주 달라집니다.</li>
+      <li><b>서버 사용 허용 여부</b>완전 오프라인·무서버를 원칙으로 할지, 고급 기능(곡면 펴기, 고정밀 OCR)만 서버로 처리하는 것을 허용할지.</li>
+      <li><b>주요 대상 문서</b>A4 서류·영수증·책·손그림·인화 사진 중 무엇이 가장 많은지에 따라 기본 모드와 테스트 세트 구성이 달라집니다.</li>
+      <li><b>UI 프레임워크</b>React(권장, 생태계)와 Svelte(가벼움) 중 팀에 익숙한 쪽.</li>
+    </ul>
+  </section>
+
+  <p class="foot">다음 단계: 위 결정 사항 확정 후 0단계 검증 프로토타입(OpenCV.js 워커 + 검출·펼치기·조명 균일화)부터 착수합니다.</p>
+</div>
