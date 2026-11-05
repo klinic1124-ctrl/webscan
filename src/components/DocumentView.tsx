@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { buildPdf, type PdfPageSize } from '../lib/pdf';
 import type { DocRecord, PageRecord, Store } from '../lib/store';
-import { canShareFiles, downloadBlob, extFor, fmtBytes, MODE_NAME, safeFileName, shareFiles, useObjectUrl } from '../ui';
+import { canShareFiles, downloadBlob, isEmbedded, extFor, fmtBytes, MODE_NAME, safeFileName, shareFiles, useObjectUrl } from '../ui';
 
 interface Props {
   store: Store;
@@ -190,6 +190,11 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
       {pages.length > 0 && (
         <section className="panel">
           <h2>내보내기</h2>
+          {isEmbedded() && (
+            <p className="alert warn">
+              지금은 다른 페이지 안에 열린 미리보기라서 파일 저장과 공유가 막힐 수 있습니다. 앱 주소로 직접 열면 정상적으로 저장됩니다.
+            </p>
+          )}
           <div className="opt">
             <span className="label">PDF 용지</span>
             <div className="chips" role="radiogroup" aria-label="PDF 용지">

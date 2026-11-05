@@ -64,6 +64,18 @@ export function downloadBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+/**
+ * True when the app runs inside another page's frame (e.g. a preview link).
+ * Such frames usually block downloads and the share sheet.
+ */
+export function isEmbedded(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true; // cross-origin parent
+  }
+}
+
 export function canShareFiles(files: File[]): boolean {
   try {
     return !!navigator.canShare && navigator.canShare({ files });
