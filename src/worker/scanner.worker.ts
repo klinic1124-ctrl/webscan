@@ -71,6 +71,8 @@ function requireSource(): Mat {
 
 export interface ScanResult {
   blob: Blob;
+  /** Small JPEG for page lists. */
+  thumb: Blob;
   width: number;
   height: number;
   mode: Awaited<ReturnType<typeof processPage>>['mode'];
@@ -79,6 +81,8 @@ export interface ScanResult {
   classify: Awaited<ReturnType<typeof processPage>>['classify'];
   timings: Record<string, number>;
 }
+
+const THUMB_LONG_SIDE = 360;
 
 const api = {
   async init() {
@@ -131,10 +135,14 @@ const api = {
     // Black & white compresses far better (and stays crisp) as PNG.
     const type = r.mode === 'bw' ? 'image/png' : format;
     const blob = await encode(r.out, type, 0.92);
+    const small = resizeLong(c, r.out, THUMB_LONG_SIDE);
+    const thumb = await encode(small, 'image/jpeg', 0.8);
+    small.delete();
     r.out.delete();
     const timings = { ...r.timings, encode: round(now() - t), total: round(now() - t0) };
     return {
       blob,
+      thumb,
       width: r.width,
       height: r.height,
       mode: r.mode,
@@ -143,6 +151,12 @@ const api = {
       classify: r.classify,
       timings,
     };
+  },
+
+  /** Current source as a JPEG (used to store generated sample photos). */
+  async exportSource(): Promise<Blob> {
+    await ensureCv();
+    return encode(requireSource(), 'image/jpeg', 0.92);
   },
 
   async heapBytes(): Promise<number> {
