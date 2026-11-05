@@ -5,11 +5,13 @@
 - 개발 계획서: [`docs/scanner-plan.html`](docs/scanner-plan.html)
 - 0단계 검증 보고서: [`docs/phase0.md`](docs/phase0.md)
 - 1단계(MVP) 기록: [`docs/phase1.md`](docs/phase1.md)
+- 2단계 기록(반사광 지우기): [`docs/phase2.md`](docs/phase2.md)
 
 ## 기능
 
 - 촬영 또는 사진 불러오기(여러 장 한꺼번에 가능) → 문서 영역 자동 검출 → 꼭짓점 미세 조정
 - 원근 보정, 그림자 · 조명 얼룩 제거, 컬러 / 회색조 / 흑백 / 사진 모드
+- 반사광 지우기: 같은 페이지를 다른 각도로 1~2장 더 찍어 반사 부분만 채워 합성
 - 여러 페이지 문서: 순서 변경, 삭제, 다시 맞추기(원본 사진을 보관하므로 화질 손실 없음)
 - PDF(자동 · A4 · Letter) 또는 이미지로 공유 · 저장
 - 기기 안 보관함(IndexedDB), 홈 화면 설치, 오프라인 동작
@@ -44,6 +46,7 @@ src/
   worker/scanner.worker.ts   OpenCV 처리 워커 (Comlink)
   lib/geometry.ts            순수 기하 계산 (꼭짓점 정렬, 직선 맞춤, 종횡비 추정)
   lib/cv/pipeline.ts         검출 · 원근 보정 · 조명 균일화 · 모드별 마무리
+  lib/cv/glare.ts            여러 장 정렬 · 반사광 합성
   lib/cv/synthetic.ts        정답이 있는 합성 "휴대폰 사진" 생성기 (테스트, 샘플)
 test/                        Vitest (Node에서 OpenCV.js 실행)
 ```

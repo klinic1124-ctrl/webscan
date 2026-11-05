@@ -278,7 +278,10 @@ function PageCard({ page, index, count, busy, confirming, onEdit, onMove, onAskD
         <span className="num mono">{index + 1}</span>
         {check && <span className="flag">확인 필요</span>}
       </button>
-      <span className="meta">{MODE_NAME[page.resultMode]}</span>
+      <span className="meta">
+        {MODE_NAME[page.resultMode]}
+        {page.extras?.length ? ` · ${page.extras.length + 1}장 합성` : ''}
+      </span>
       {confirming ? (
         <div className="card-actions">
           <button className="mini danger" onClick={onDelete} disabled={busy}>

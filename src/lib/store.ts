@@ -35,6 +35,15 @@ export interface PageRecord {
   height: number;
   /** Small JPEG for lists. */
   thumb: Blob;
+  /** Extra photos of the same page used to remove reflections. */
+  extras?: ExtraShotRecord[];
+}
+
+export interface ExtraShotRecord {
+  source: Blob;
+  rotation: number;
+  /** Corners as fractions (0..1) of this rotated photo. */
+  quad: Quad;
 }
 
 /**
@@ -49,20 +58,23 @@ interface Bytes {
 }
 const BINARY = ['source', 'result', 'thumb'] as const;
 type BinaryKey = (typeof BINARY)[number];
-type StoredPage = Omit<PageRecord, BinaryKey> & Record<BinaryKey, Bytes | Blob>;
+type StoredExtra = Omit<ExtraShotRecord, 'source'> & { source: Bytes | Blob };
+type StoredPage = Omit<PageRecord, BinaryKey | 'extras'> & Record<BinaryKey, Bytes | Blob> & { extras?: StoredExtra[] };
+
+const toBytes = async (b: Blob): Promise<Bytes> => ({ buf: await b.arrayBuffer(), type: b.type });
+const toBlob = (v: Bytes | Blob): Blob => (v && 'buf' in v ? new Blob([v.buf], { type: v.type }) : (v as Blob));
 
 async function toStored(p: PageRecord): Promise<StoredPage> {
   const out = { ...p } as unknown as StoredPage;
-  for (const k of BINARY) out[k] = { buf: await p[k].arrayBuffer(), type: p[k].type };
+  for (const k of BINARY) out[k] = await toBytes(p[k]);
+  if (p.extras) out.extras = await Promise.all(p.extras.map(async (e) => ({ ...e, source: await toBytes(e.source) })));
   return out;
 }
 
 function fromStored(s: StoredPage): PageRecord {
   const out = { ...s } as unknown as PageRecord;
-  for (const k of BINARY) {
-    const v = s[k];
-    out[k] = v && 'buf' in v ? new Blob([v.buf], { type: v.type }) : (v as Blob);
-  }
+  for (const k of BINARY) out[k] = toBlob(s[k]);
+  if (s.extras) out.extras = s.extras.map((e) => ({ ...e, source: toBlob(e.source) }));
   return out;
 }
 

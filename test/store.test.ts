@@ -104,4 +104,18 @@ describe('store', () => {
     expect(pages[0].thumb.type).toBe('image/jpeg');
     expect(await pages[1].result.text()).toBe('res-old');
   });
+
+  it('keeps extra photos (for reflection removal) with the page', async () => {
+    const s = fresh();
+    const doc = await s.createDoc();
+    const a = await s.savePage({
+      ...page(doc.id, 'a'),
+      extras: [{ source: new Blob(['extra-1'], { type: 'image/jpeg' }), rotation: 1, quad }],
+    });
+    const [p] = await s.getPages(doc.id);
+    expect(p.id).toBe(a.id);
+    expect(p.extras).toHaveLength(1);
+    expect(p.extras![0].rotation).toBe(1);
+    expect(await p.extras![0].source.text()).toBe('extra-1');
+  });
 });

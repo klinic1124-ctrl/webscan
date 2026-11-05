@@ -1,24 +1,30 @@
+import { transfer } from 'comlink';
 import { useEffect, useRef, useState } from 'react';
 import type { DetectResult, Mode } from '../lib/cv/pipeline';
 import { fullFrameQuad, isConvex, nearestPaper, PAPER, rotateQuadCW, type AspectChoice, type Quad } from '../lib/geometry';
 import type { DetectState } from '../lib/store';
-import { scanner, type ScanResult, type SourceInfo } from '../scanner';
+import { decodeFile, scanner, type ScanResult, type SourceInfo } from '../scanner';
 import { ASPECTS, MODE_NAME, MODES, useObjectUrl, type EngineInfo } from '../ui';
 import { CropEditor } from './CropEditor';
 import { Metrics } from './Metrics';
 
-/** Everything the editor needs for one page; the photo is already loaded in the worker. */
+/** One photo of the page: shots[0] is the main photo, the rest fill in reflections. */
+export interface Shot {
+  source: Blob;
+  info: SourceInfo;
+  rotation: number;
+  quad: Quad;
+}
+
+/** Everything the editor needs for one page; the photos are already loaded in the worker. */
 export interface EditSession {
   docId: string;
   /** Existing page being re-edited. */
   pageId?: string;
   /** Position for a new page (default: end). */
   insertAt?: number;
-  source: Blob;
   sourceName: string;
-  info: SourceInfo;
-  rotation: number;
-  quad: Quad;
+  shots: Shot[];
   mode: Mode;
   aspect: AspectChoice;
   detect: DetectResult | null;
@@ -28,9 +34,7 @@ export interface EditSession {
 
 export interface SavedPage {
   session: EditSession;
-  quad: Quad;
-  rotation: number;
-  info: SourceInfo;
+  shots: Shot[];
   mode: Mode;
   aspect: AspectChoice;
   detectState: DetectState;
@@ -46,30 +50,42 @@ interface Props {
   onSave: (page: SavedPage) => Promise<void>;
 }
 
+const MAX_SHOTS = 3;
+
 export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) {
-  const [info, setInfo] = useState(session.info);
-  const [quad, setQuad] = useState(session.quad);
-  const [rotation, setRotation] = useState(session.rotation);
+  const [shots, setShots] = useState<Shot[]>(session.shots);
+  const [sel, setSel] = useState(0);
   const [detect, setDetect] = useState(session.detect);
   const [detectState, setDetectState] = useState<DetectState>(session.detectState);
   const [mode, setMode] = useState<Mode>(session.mode);
   const [aspect, setAspect] = useState<AspectChoice>(session.aspect);
   const [result, setResult] = useState<ScanResult | null>(null);
-  const previewUrl = useObjectUrl(info.preview);
+  const current = shots[Math.min(sel, shots.length - 1)];
+  const previewUrl = useObjectUrl(current.info.preview);
   const resultUrl = useObjectUrl(result?.blob);
   const resultRef = useRef<HTMLDivElement>(null);
   const isNew = !session.pageId;
+  const isSample = session.sourceName.startsWith('sample-');
 
-  // Any change to the crop invalidates the preview.
+  const updateShot = (i: number, patch: Partial<Shot>) => setShots((list) => list.map((s, k) => (k === i ? { ...s, ...patch } : s)));
+
+  // Any change to a crop invalidates the preview.
   const changeQuad = (q: Quad) => {
-    setQuad(q);
+    updateShot(sel, { quad: q });
     setResult(null);
-    setDetectState('manual');
+    if (sel === 0) setDetectState('manual');
   };
 
-  const scan = (m: Mode, a: AspectChoice, scroll: boolean) =>
-    run('스캔하는 중', async () => {
-      const r = await scanner().scan(quad, { mode: m, aspect: a });
+  const scanNow = (list: Shot[], m: Mode, a: AspectChoice) =>
+    scanner().scan(
+      list[0].quad,
+      { mode: m, aspect: a },
+      list.slice(1).map((s) => s.quad),
+    );
+
+  const preview = (m: Mode, a: AspectChoice, scroll: boolean) =>
+    run(shots.length > 1 ? '사진을 합성하는 중' : '스캔하는 중', async () => {
+      const r = await scanNow(shots, m, a);
       setResult(r);
       if (scroll) requestAnimationFrame(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
       return r;
@@ -78,31 +94,59 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
   const choose = (m: Mode, a: AspectChoice) => {
     setMode(m);
     setAspect(a);
-    if (result) void scan(m, a, false);
+    if (result) void preview(m, a, false);
   };
 
   const onRotate = () =>
     void run('회전하는 중', async () => {
-      const next = await scanner().rotate();
-      setQuad(rotateQuadCW(quad, info.width, info.height));
-      setInfo(next);
-      setRotation((r) => (r + 1) % 4);
+      const i = sel;
+      const next = await scanner().rotate(i);
+      updateShot(i, { info: next, rotation: (shots[i].rotation + 1) % 4, quad: rotateQuadCW(shots[i].quad, shots[i].info.width, shots[i].info.height) });
       setResult(null);
     });
 
   const onRedetect = () =>
     void run('경계를 찾는 중', async () => {
-      const d = await scanner().detect();
-      setDetect(d);
-      setQuad(d.quad);
-      setDetectState(d.found ? 'found' : d.guess ? 'guess' : 'none');
+      const d = await scanner().detect(sel);
+      updateShot(sel, { quad: d.quad });
+      if (sel === 0) {
+        setDetect(d);
+        setDetectState(d.found ? 'found' : d.guess ? 'guess' : 'none');
+      }
+      setResult(null);
+    });
+
+  const addShot = (file: File | null, sampleKind?: string) =>
+    void run('사진을 더하는 중', async () => {
+      let info: SourceInfo & { index: number };
+      let source: Blob;
+      if (file) {
+        const bmp = await decodeFile(file);
+        info = await scanner().addShot(transfer(bmp, [bmp]));
+        source = file;
+      } else {
+        info = await scanner().loadSample(sampleKind as 'text', shots.length);
+        source = await scanner().exportSource(info.index);
+      }
+      const d = await scanner().detect(info.index);
+      const next = [...shots, { source, info, rotation: 0, quad: d.quad }];
+      setShots(next);
+      setSel(next.length - 1);
+      setResult(null);
+    });
+
+  const removeShot = (i: number) =>
+    void run('사진을 빼는 중', async () => {
+      await scanner().removeShot(i);
+      setShots((list) => list.filter((_, k) => k !== i));
+      setSel(0);
       setResult(null);
     });
 
   const onSaveClick = () =>
-    void run('페이지 저장 중', async () => {
-      const r = result ?? (await scanner().scan(quad, { mode, aspect }));
-      await onSave({ session, quad, rotation, info, mode, aspect, detectState, result: r });
+    void run(shots.length > 1 ? '합성해서 저장하는 중' : '페이지 저장 중', async () => {
+      const r = result ?? (await scanNow(shots, mode, aspect));
+      await onSave({ session, shots, mode, aspect, detectState, result: r });
     });
 
   // Keyboard: Escape cancels.
@@ -112,9 +156,49 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
     return () => window.removeEventListener('keydown', onKey);
   }, [busy, onCancel]);
 
-  const convex = isConvex(quad);
-  const lowRes = Math.max(info.width, info.height) < 2000 && !session.sourceName.startsWith('sample-');
+  const convex = shots.every((s) => isConvex(s.quad));
+  const info = current.info;
+  const lowRes = sel === 0 && Math.max(info.width, info.height) < 2000 && !isSample;
   const paper = result && aspect === 'auto' ? nearestPaper(result.aspect.ratio) : null;
+  const canAdd = shots.length < MAX_SHOTS;
+  const glare = !!result && result.saturatedFrac > 0.015;
+
+  const addButtons = (primary: boolean) => (
+    <div className="row">
+      <label className={`btn small${primary ? ' primary' : ''}${busy ? ' disabled' : ''}`}>
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          disabled={busy}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (f) addShot(f);
+          }}
+        />
+        다른 각도로 한 장 더 찍기
+      </label>
+      <label className={`btn small${busy ? ' disabled' : ''}`}>
+        <input
+          type="file"
+          accept="image/*"
+          disabled={busy}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (f) addShot(f);
+          }}
+        />
+        사진에서 고르기
+      </label>
+      {isSample && (
+        <button className="btn small" onClick={() => addShot(null, session.sourceName.slice('sample-'.length))} disabled={busy}>
+          샘플로 한 장 더
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -125,10 +209,10 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
             취소
           </button>
         </div>
-        {detect && !detect.found && detect.guess && detectState !== 'manual' && (
+        {sel === 0 && detect && !detect.found && detect.guess && detectState !== 'manual' && (
           <p className="alert warn">테두리가 뚜렷하지 않아 추정한 영역입니다. 네 모서리가 종이 끝에 맞는지 확인해 주세요.</p>
         )}
-        {detect && !detect.found && !detect.guess && detectState !== 'manual' && (
+        {sel === 0 && detect && !detect.found && !detect.guess && detectState !== 'manual' && (
           <p className="alert warn">문서 테두리를 찾지 못했습니다. 네 모서리를 직접 맞춰 주세요. 종이와 색이 다른 바닥 위에서 찍으면 더 잘 찾습니다.</p>
         )}
         {lowRes && (
@@ -136,7 +220,17 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
             사진 해상도가 낮습니다({info.width}×{info.height}). 사진 보관함에서 고르면 줄어든 사진이 올 수 있습니다. 카메라로 직접 찍으면 원본 해상도로 스캔됩니다.
           </p>
         )}
-        {previewUrl && <CropEditor previewUrl={previewUrl} width={info.width} height={info.height} quad={quad} onChange={changeQuad} />}
+
+        {shots.length > 1 && (
+          <div className="shots" role="tablist" aria-label="이 페이지의 사진">
+            {shots.map((s, i) => (
+              <ShotTab key={i} shot={s} index={i} selected={i === sel} busy={busy} onSelect={() => setSel(i)} onRemove={i > 0 ? () => removeShot(i) : undefined} />
+            ))}
+          </div>
+        )}
+        {shots.length > 1 && <p className="hint">사진마다 네 모서리를 맞춰 주세요. 기본 사진을 쓰고, 반사된 부분만 다른 사진에서 가져옵니다.</p>}
+
+        {previewUrl && <CropEditor previewUrl={previewUrl} width={info.width} height={info.height} quad={current.quad} onChange={changeQuad} />}
         <div className="row tools">
           <button className="btn small" onClick={onRedetect} disabled={busy}>
             자동 검출
@@ -148,7 +242,7 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
             90° 회전
           </button>
         </div>
-        {!convex && <p className="alert warn">모서리가 꼬여 있습니다. 사각형이 되도록 맞춰 주세요.</p>}
+        {!convex && <p className="alert warn">모서리가 꼬인 사진이 있습니다. 사각형이 되도록 맞춰 주세요.</p>}
 
         <div className="opts">
           <div className="opt">
@@ -171,9 +265,14 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
               ))}
             </div>
           </div>
+          <details className="opt glare-box" open={shots.length > 1 || undefined}>
+            <summary className="label">반사광 지우기{shots.length > 1 ? ` · 사진 ${shots.length}장` : ''}</summary>
+            <p className="hint">광택 사진이나 코팅된 종이에 반사광이 있으면, 조명이나 휴대폰 각도를 바꿔 같은 페이지를 한두 장 더 찍으세요. 반사된 부분만 다른 사진으로 채웁니다.</p>
+            {canAdd ? addButtons(false) : <p className="hint">사진은 페이지당 {MAX_SHOTS}장까지 쓸 수 있습니다.</p>}
+          </details>
         </div>
         <div className="row split">
-          <button className="btn" onClick={() => void scan(mode, aspect, true)} disabled={!convex || busy}>
+          <button className="btn" onClick={() => void preview(mode, aspect, true)} disabled={!convex || busy}>
             미리보기
           </button>
           <button className="btn primary grow" onClick={onSaveClick} disabled={!convex || busy}>
@@ -195,11 +294,23 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
             </span>
             <span className="tag mono">A4 기준 약 {Math.round(Math.max(result.width, result.height) / 11.69)} dpi</span>
             {paper && <span className="tag mono">≈ {PAPER[paper].label.split(' ')[0]}</span>}
+            {result.fusion && (
+              <span className="tag">
+                사진 {result.fusion.shots}장 합성 · {(result.fusion.replacedFrac * 100).toFixed(1)}% 보정
+              </span>
+            )}
           </div>
-          {result.saturatedFrac > 0.015 && (
-            <p className="alert warn">
-              반사광이나 과노출로 하얗게 날아간 부분이 {(result.saturatedFrac * 100).toFixed(1)}% 있습니다. 그 부분은 복원할 수 없으니 조명 각도를 바꿔 다시 찍어 보세요.
-            </p>
+          {result.fusion && result.fusion.aligned.some((a) => !a) && (
+            <p className="hint">일부 사진은 세밀한 정렬에 실패해 모서리 기준으로만 맞췄습니다. 반사 부분 경계가 어긋나 보이면 그 사진의 모서리를 더 정확히 맞춰 주세요.</p>
+          )}
+          {glare && (
+            <div className="alert warn">
+              <p>
+                반사광이나 과노출로 하얗게 날아간 부분이 {(result.saturatedFrac * 100).toFixed(1)}% 있습니다.
+                {canAdd ? ' 각도를 바꿔 한 장 더 찍으면 그 부분을 채울 수 있습니다.' : ''}
+              </p>
+              {canAdd && addButtons(true)}
+            </div>
           )}
           <div className="result">
             <img src={resultUrl} alt="스캔 미리보기" />
@@ -210,7 +321,24 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
         </section>
       )}
 
-      <Metrics engine={engine} info={info} detect={detect} loadTimings={session.loadTimings} result={result} quad={quad} mode={mode} aspect={aspect} busy={busy} run={run} />
+      <Metrics engine={engine} info={shots[0].info} detect={detect} loadTimings={session.loadTimings} result={result} quad={shots[0].quad} extraQuads={shots.slice(1).map((s) => s.quad)} mode={mode} aspect={aspect} busy={busy} run={run} />
     </>
+  );
+}
+
+function ShotTab({ shot, index, selected, busy, onSelect, onRemove }: { shot: Shot; index: number; selected: boolean; busy: boolean; onSelect: () => void; onRemove?: () => void }) {
+  const url = useObjectUrl(shot.info.preview);
+  return (
+    <div className={`shot${selected ? ' on' : ''}`}>
+      <button role="tab" aria-selected={selected} className="shot-btn" onClick={onSelect} disabled={busy}>
+        {url && <img src={url} alt="" />}
+        <span>{index === 0 ? '기본' : `추가 ${index}`}</span>
+      </button>
+      {onRemove && (
+        <button className="mini" onClick={onRemove} disabled={busy} aria-label={`추가 사진 ${index} 빼기`}>
+          ✕
+        </button>
+      )}
+    </div>
   );
 }

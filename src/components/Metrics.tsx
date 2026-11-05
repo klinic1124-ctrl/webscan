@@ -17,6 +17,7 @@ const TIMING_LABEL: Record<string, string> = {
   flatten: '조명 균일화',
   finish: '모드 마무리',
   toRGBA: '색 변환',
+  fuse: '반사광 합성',
   encode: '파일 인코딩',
   total: '스캔 합계',
 };
@@ -34,6 +35,7 @@ interface Props {
   loadTimings: Record<string, number>;
   result: ScanResult | null;
   quad: Quad;
+  extraQuads?: Quad[];
   mode: Mode;
   aspect: AspectChoice;
   busy: boolean;
@@ -41,7 +43,7 @@ interface Props {
 }
 
 /** Developer measurements (collapsed by default). */
-export function Metrics({ engine, info, detect, loadTimings, result, quad, mode, aspect, busy, run }: Props) {
+export function Metrics({ engine, info, detect, loadTimings, result, quad, extraQuads = [], mode, aspect, busy, run }: Props) {
   const [bench, setBench] = useState<Bench | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -54,7 +56,7 @@ export function Metrics({ engine, info, detect, loadTimings, result, quad, mode,
         const t = performance.now();
         await scanner().detect();
         sums.detect = (sums.detect ?? 0) + performance.now() - t;
-        const r = await scanner().scan(quad, { mode, aspect });
+        const r = await scanner().scan(quad, { mode, aspect }, extraQuads);
         for (const [k, v] of Object.entries(r.timings)) sums[k] = (sums[k] ?? 0) + v;
       }
       const avg = Object.fromEntries(Object.entries(sums).map(([k, v]) => [k, Math.round(v / runs)]));
@@ -85,6 +87,7 @@ export function Metrics({ engine, info, detect, loadTimings, result, quad, mode,
           aspect: { ratio: +result.aspect.ratio.toFixed(4), method: result.aspect.method },
           classify: result.classify,
           saturatedPct: +(result.saturatedFrac * 100).toFixed(2),
+          fusion: result.fusion,
           timings: result.timings,
           bytes: result.blob.size,
         },

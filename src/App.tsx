@@ -1,12 +1,12 @@
 import { transfer } from 'comlink';
 import { useCallback, useEffect, useState } from 'react';
 import { DocumentView } from './components/DocumentView';
-import { Editor, type EditSession, type SavedPage } from './components/Editor';
+import { Editor, type EditSession, type SavedPage, type Shot } from './components/Editor';
 import { Library } from './components/Library';
 import type { DetectResult } from './lib/cv/pipeline';
 import type { SampleKind } from './lib/cv/synthetic';
-import { createStore, requestPersistence, type DetectState, type PageRecord } from './lib/store';
-import { decodeFile, scanner } from './scanner';
+import { createStore, requestPersistence, type DetectState, type ExtraShotRecord, type PageRecord } from './lib/store';
+import { decodeFile, scanner, type SourceInfo } from './scanner';
 import { denormalizeQuad, fmtMs, normalizeQuad, type EngineInfo } from './ui';
 
 const store = createStore();
@@ -28,17 +28,23 @@ async function loadSource(blob: Blob, rotation: number) {
   return { info, timings: { decode, ...info.timings } };
 }
 
+/** Adds a stored extra photo (reflection removal) back into the worker. */
+async function loadExtra(e: ExtraShotRecord): Promise<Shot> {
+  const bmp = await decodeFile(e.source);
+  let info: SourceInfo = await scanner().addShot(transfer(bmp, [bmp]));
+  const index = await scanner().shotCount() - 1;
+  for (let i = 0; i < e.rotation; i++) info = await scanner().rotate(index);
+  return { source: e.source, info, rotation: e.rotation, quad: denormalizeQuad(e.quad, info.width, info.height) };
+}
+
 async function newSession(docId: string, source: Blob, sourceName: string): Promise<EditSession> {
   const { info, timings } = await loadSource(source, 0);
   const t = performance.now();
   const detect = await scanner().detect();
   return {
     docId,
-    source,
     sourceName,
-    info,
-    rotation: 0,
-    quad: detect.quad,
+    shots: [{ source, info, rotation: 0, quad: detect.quad }],
     mode: 'auto',
     aspect: 'auto',
     detect,
@@ -125,11 +131,8 @@ export function App() {
         name: 'edit',
         session: {
           docId: doc.id,
-          source,
           sourceName: `sample-${kind}`,
-          info,
-          rotation: 0,
-          quad: detect.quad,
+          shots: [{ source, info, rotation: 0, quad: detect.quad }],
           mode: 'auto',
           aspect: 'auto',
           detect,
@@ -142,16 +145,15 @@ export function App() {
   const editPage = (page: PageRecord) =>
     void run('페이지를 여는 중', async () => {
       const { info, timings } = await loadSource(page.source, page.rotation);
+      const shots: Shot[] = [{ source: page.source, info, rotation: page.rotation, quad: denormalizeQuad(page.quad, info.width, info.height) }];
+      for (const e of page.extras ?? []) shots.push(await loadExtra(e));
       setView({
         name: 'edit',
         session: {
           docId: page.docId,
           pageId: page.id,
-          source: page.source,
           sourceName: 'page',
-          info,
-          rotation: page.rotation,
-          quad: denormalizeQuad(page.quad, info.width, info.height),
+          shots,
           mode: page.mode,
           aspect: page.aspect,
           detect: null,
@@ -161,14 +163,15 @@ export function App() {
       });
     });
 
-  const savePage = async ({ session, quad, rotation, info, mode, aspect, detectState, result }: SavedPage) => {
+  const savePage = async ({ session, shots, mode, aspect, detectState, result }: SavedPage) => {
+    const [main, ...extras] = shots;
     await store.savePage(
       {
         id: session.pageId,
         docId: session.docId,
-        source: session.source,
-        rotation,
-        quad: normalizeQuad(quad, info.width, info.height),
+        source: main.source,
+        rotation: main.rotation,
+        quad: normalizeQuad(main.quad, main.info.width, main.info.height),
         mode,
         aspect,
         detect: detectState,
@@ -177,6 +180,7 @@ export function App() {
         width: result.width,
         height: result.height,
         thumb: result.thumb,
+        extras: extras.map((e) => ({ source: e.source, rotation: e.rotation, quad: normalizeQuad(e.quad, e.info.width, e.info.height) })),
       },
       session.insertAt,
     );
