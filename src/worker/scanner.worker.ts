@@ -7,7 +7,9 @@ import { detectQuad, processPage, resizeLong, rotateCW, type DetectResult, type 
 import { makeScene, type SampleKind } from '../lib/cv/synthetic';
 import type { Quad } from '../lib/geometry';
 
-export const MAX_SOURCE_LONG_SIDE = 4000;
+// 4096 keeps 12 MP phone photos (4032 px) at full size instead of spending
+// ~0.25 s on iPhone shrinking them by 1 %.
+export const MAX_SOURCE_LONG_SIDE = 4096;
 const PREVIEW_LONG_SIDE = 1600;
 
 let cv: CV | null = null;
