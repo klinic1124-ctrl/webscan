@@ -210,6 +210,7 @@ export function App() {
     JSON.stringify(
       {
         device: deviceSummary(),
+        build: __BUILD_ID__,
         engine,
         source: source && { width: source.width, height: source.height },
         detect: detect && {
@@ -279,7 +280,7 @@ export function App() {
           <span className="mark" aria-hidden="true" />
           <div>
             <h1>문서 스캐너</h1>
-            <p className="sub">0단계 검증 빌드 · 사진은 이 기기 밖으로 나가지 않습니다</p>
+            <p className="sub">0단계 검증 빌드 <span className="mono">{__BUILD_ID__}</span> · 사진은 이 기기 밖으로 나가지 않습니다</p>
           </div>
         </div>
         <span className={`engine ${engine ? 'ok' : engineError ? 'bad' : ''}`}>
