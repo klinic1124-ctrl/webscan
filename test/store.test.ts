@@ -71,6 +71,7 @@ describe('store', () => {
     const first = await s.createDoc('첫째');
     await new Promise((r) => setTimeout(r, 5));
     const second = await s.createDoc('둘째');
+    await new Promise((r) => setTimeout(r, 5)); // distinct timestamps for a stable order
     const p = await s.savePage(page(first.id, 'x'));
     expect((await s.listDocs()).map((d) => d.name)).toEqual(['첫째', '둘째']); // first was updated by savePage
     await s.renameDoc(second.id, '  ');
