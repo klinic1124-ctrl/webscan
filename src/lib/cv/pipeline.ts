@@ -7,6 +7,9 @@ import {
   outputSize,
   polygonArea,
   refineQuadWithEdges,
+  fitLine,
+  intersectLines,
+  type Line,
   resolveRatio,
   scaleQuad,
   type AspectChoice,
@@ -28,10 +31,17 @@ const odd = (n: number) => (Math.round(n) % 2 === 0 ? Math.round(n) + 1 : Math.r
 export interface DetectResult {
   /** Corners in source-image pixels, TL, TR, BR, BL. */
   quad: Quad;
-  /** false => no convincing document edge; quad is the full frame. */
+  /** false => no convincing document edge. */
   found: boolean;
+  /**
+   * When not found: true if `quad` is a low-confidence best guess (shown for
+   * the user to confirm), false if it is just the full frame.
+   */
+  guess: boolean;
   /** 0..1, share of the quad outline backed by image edges. */
   edgeSupport: number;
+  /** Weakest inside-vs-outside colour difference along a side (0..~255). */
+  contrast: number;
   method: string;
   candidates: number;
   ms: number;
@@ -102,24 +112,73 @@ export function detectQuad(cv: CV, rgba: Mat): DetectResult {
     cv.morphologyEx(bin, bin, cv.MORPH_OPEN, k9);
     collect(bin, cv.RETR_EXTERNAL, 'otsu');
 
-    type Best = { quad: Quad; method: string; score: number; support: number };
+    // Text-free edges: a closing wipes out dark strokes (text, staff lines,
+    // title bars) while the paper/table boundary survives.
+    const clean = s.add(new cv.Mat());
+    const k15 = s.add(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15)));
+    cv.morphologyEx(blur, clean, cv.MORPH_CLOSE, k15);
+    const edgesClean = s.add(new cv.Mat());
+    cv.Canny(clean, edgesClean, 15, 45);
+
+    // D: long straight lines (robust when table texture touches the page edge).
+    for (const q of lineQuads(cv, s, edgesClean, w, h)) candidates.push({ quad: q, method: 'lines' });
+
+    // E: contours of the text-free edges.
+    const cleanDil = s.add(new cv.Mat());
+    cv.dilate(edgesClean, cleanDil, k3);
+    collect(cleanDil, cv.RETR_LIST, 'edges-clean');
+
+    const colorBlur = s.add(new cv.Mat());
+    cv.GaussianBlur(small, colorBlur, new cv.Size(5, 5), 0);
+
+    type Best = { quad: Quad; method: string; score: number; support: number; contrast: number; borderSides: number };
     let best = null as Best | null;
+    let strong = null as Best | null;
     for (const c of candidates) {
       const a = polygonArea(c.quad) / (w * h);
       if (a < 0.08 || a > 0.995) continue;
       if (!isConvex(c.quad)) continue;
       if (interiorAngles(c.quad).some((x) => x < 40 || x > 140)) continue;
+      // A page may run off the photo on up to two sides; beyond that the
+      // "quad" is mostly the frame itself and says nothing about the page.
+      const borderSides = [0, 1, 2, 3].filter((i) => onBorder(c.quad[i], c.quad[(i + 1) % 4], w, h)).length;
+      if (borderSides > 2) continue;
       const sup = edgeSupport(support, c.quad);
-      const score = 0.65 * sup + 0.35 * Math.sqrt(a);
-      if (!best || score > best.score) best = { ...c, score, support: sup };
+      const { contrast: con } = sideContrast(colorBlur, c.quad);
+      const score =
+        0.5 * sup +
+        0.2 * Math.sqrt(a) +
+        0.3 * Math.min(1, con / 12) -
+        0.12 * borderSides;
+      // Strong candidates (clear edge + clear colour change on every side)
+      // compete on size: the page is the outermost such shape; text lines
+      // and table patterns form smaller or weaker ones.
+      // Frame-border sides get edge support for free, so such shapes must
+      // show far stronger evidence before they may win on size.
+      const isStrong = borderSides === 0 ? sup >= 0.8 && con >= 8 : sup >= 0.95 && con >= 12;
+      if (isStrong) {
+        const sScore = Math.sqrt(a) - 0.25 * borderSides + 0.1 * sup;
+        if (!strong || sScore > strong.score) strong = { ...c, score: sScore, support: sup, contrast: con, borderSides };
+      }
+      if (!best || score > best.score) best = { ...c, score, support: sup, contrast: con, borderSides };
     }
 
+    if (strong) best = strong;
     const ms = () => now() - t0;
-    if (!best || best.support < 0.45) {
+    // Using the photo frame as a side is a weaker claim: ask for more evidence.
+    const confident =
+      !!best &&
+      (best.borderSides === 0
+        ? best.support >= 0.45 && best.contrast >= 5
+        : best.support >= 0.9 && best.contrast >= 12);
+    const guess = !confident && !!best && best.support >= 0.25 && best.contrast >= 4;
+    if (!best || (!confident && !guess)) {
       return {
         quad: fullFrameQuad(W, H),
         found: false,
+        guess: false,
         edgeSupport: best?.support ?? 0,
+        contrast: Math.round(best?.contrast ?? 0),
         method: 'none',
         candidates: candidates.length,
         ms: ms(),
@@ -136,13 +195,186 @@ export function detectQuad(cv: CV, rgba: Mat): DetectResult {
     const quad = clampQuad(scaleQuad(inset, 1 / scale), W, H);
     return {
       quad,
-      found: true,
+      found: confident,
+      guess,
       edgeSupport: best.support,
+      contrast: Math.round(best.contrast),
       method: best.method,
       candidates: candidates.length,
       ms: ms(),
     };
   });
+}
+
+/** True when a segment lies along the image border (page cut off by the frame). */
+function onBorder(a: Point, b: Point, w: number, h: number, tol = 3): boolean {
+  return (
+    (a.x <= tol && b.x <= tol) ||
+    (a.y <= tol && b.y <= tol) ||
+    (a.x >= w - 1 - tol && b.x >= w - 1 - tol) ||
+    (a.y >= h - 1 - tol && b.y >= h - 1 - tol)
+  );
+}
+
+/**
+ * Smallest colour difference between just-inside and just-outside the quad,
+ * over its sides (sides on the frame border are skipped). Lines in the
+ * table texture have the same colour on both sides; a paper edge does not.
+ * Contrast is 0 unless at least two real sides could be measured.
+ */
+function sideContrast(rgbaBlur: Mat, q: Quad): { contrast: number; sides: number } {
+  const w = rgbaBlur.cols;
+  const h = rgbaBlur.rows;
+  const d: Uint8Array = rgbaBlur.data;
+  const off = Math.max(3, 0.006 * Math.hypot(w, h));
+  const cx = (q[0].x + q[1].x + q[2].x + q[3].x) / 4;
+  const cy = (q[0].y + q[1].y + q[2].y + q[3].y) / 4;
+  let min = Infinity;
+  let sides = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = q[i];
+    const b = q[(i + 1) % 4];
+    if (onBorder(a, b, w, h)) continue;
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    let nx = -(b.y - a.y) / len;
+    let ny = (b.x - a.x) / len;
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    if (nx * (cx - mx) + ny * (cy - my) < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+    const inS = [0, 0, 0];
+    const outS = [0, 0, 0];
+    let n = 0;
+    for (let k = 0; k < 32; k++) {
+      const t = 0.1 + (0.8 * k) / 31;
+      const px = a.x + (b.x - a.x) * t;
+      const py = a.y + (b.y - a.y) * t;
+      const ix = Math.round(px + nx * off);
+      const iy = Math.round(py + ny * off);
+      const ox = Math.round(px - nx * off);
+      const oy = Math.round(py - ny * off);
+      if (ix < 0 || iy < 0 || ix >= w || iy >= h || ox < 0 || oy < 0 || ox >= w || oy >= h) continue;
+      const ii = (iy * w + ix) * 4;
+      const oi = (oy * w + ox) * 4;
+      for (let c = 0; c < 3; c++) {
+        inS[c] += d[ii + c];
+        outS[c] += d[oi + c];
+      }
+      n++;
+    }
+    if (n < 8) continue;
+    const diff = Math.hypot((inS[0] - outS[0]) / n, (inS[1] - outS[1]) / n, (inS[2] - outS[2]) / n);
+    min = Math.min(min, diff);
+    sides++;
+  }
+  return { contrast: sides >= 2 && Number.isFinite(min) ? min : 0, sides };
+}
+
+/**
+ * Quads assembled from long straight edges (probabilistic Hough). Collinear
+ * segments are merged; the frame borders are added as optional sides for
+ * pages that run off the photo. Pairs of roughly parallel lines are combined
+ * with a second, crossing pair.
+ */
+function lineQuads(cv: CV, s: MatScope, edges: Mat, w: number, h: number): Quad[] {
+  const minDim = Math.min(w, h);
+  const raw = s.add(new cv.Mat());
+  cv.HoughLinesP(edges, raw, 1, Math.PI / 180, 50, minDim * 0.12, 8);
+  const seg: Int32Array = raw.data32S;
+
+  interface Cluster {
+    theta: number; // normal angle [0, π)
+    rho: number;
+    len: number;
+    pts: Point[];
+  }
+  const segs: { a: Point; b: Point; len: number }[] = [];
+  for (let i = 0; i + 3 < seg.length; i += 4) {
+    const a = { x: seg[i], y: seg[i + 1] };
+    const b = { x: seg[i + 2], y: seg[i + 3] };
+    segs.push({ a, b, len: Math.hypot(b.x - a.x, b.y - a.y) });
+  }
+  segs.sort((p, q) => q.len - p.len);
+  const clusters: Cluster[] = [];
+  for (const sg of segs.slice(0, 200)) {
+    let theta = Math.atan2(sg.b.x - sg.a.x, -(sg.b.y - sg.a.y)); // normal direction
+    if (theta < 0) theta += Math.PI;
+    if (theta >= Math.PI) theta -= Math.PI;
+    const rho = sg.a.x * Math.cos(theta) + sg.a.y * Math.sin(theta);
+    const hit = clusters.find((c) => {
+      let dt = Math.abs(c.theta - theta);
+      let dr = Math.abs(c.rho - rho);
+      if (dt > Math.PI / 2) {
+        dt = Math.PI - dt;
+        dr = Math.abs(c.rho + rho);
+      }
+      return dt < (2.5 * Math.PI) / 180 && dr < 6;
+    });
+    if (hit) {
+      hit.len += sg.len;
+      hit.pts.push(sg.a, sg.b);
+    } else {
+      clusters.push({ theta, rho, len: sg.len, pts: [sg.a, sg.b] });
+    }
+  }
+  clusters.sort((p, q) => q.len - p.len);
+
+  const lines: Line[] = [];
+  for (const c of clusters.slice(0, 22)) {
+    const l = fitLine(c.pts);
+    if (l) lines.push(l);
+  }
+  lines.push(
+    { px: 0, py: 0, dx: 1, dy: 0 },
+    { px: 0, py: h - 1, dx: 1, dy: 0 },
+    { px: 0, py: 0, dx: 0, dy: 1 },
+    { px: w - 1, py: 0, dx: 0, dy: 1 },
+  );
+
+  const angle = (l: Line) => {
+    let a = Math.atan2(l.dy, l.dx);
+    if (a < 0) a += Math.PI;
+    if (a >= Math.PI) a -= Math.PI;
+    return a;
+  };
+  const angDiff = (a: number, b: number) => {
+    const d = Math.abs(a - b);
+    return Math.min(d, Math.PI - d);
+  };
+  const lineDist = (l: Line, p: Point) => Math.abs((p.x - l.px) * l.dy - (p.y - l.py) * l.dx);
+
+  const pairs: { i: number; j: number; ang: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    for (let j = i + 1; j < lines.length; j++) {
+      const ai = angle(lines[i]);
+      const aj = angle(lines[j]);
+      if (angDiff(ai, aj) > (35 * Math.PI) / 180) continue;
+      if (lineDist(lines[i], { x: lines[j].px, y: lines[j].py }) < 0.15 * minDim) continue;
+      pairs.push({ i, j, ang: ai });
+    }
+  }
+
+  const out: Quad[] = [];
+  const margin = 0.02 * Math.max(w, h);
+  for (let p = 0; p < pairs.length; p++) {
+    for (let q = p + 1; q < pairs.length; q++) {
+      const A = pairs[p];
+      const B = pairs[q];
+      if (angDiff(A.ang, B.ang) < (50 * Math.PI) / 180) continue;
+      if (A.i === B.i || A.i === B.j || A.j === B.i || A.j === B.j) continue;
+      const pts = [
+        intersectLines(lines[A.i], lines[B.i]),
+        intersectLines(lines[A.i], lines[B.j]),
+        intersectLines(lines[A.j], lines[B.i]),
+        intersectLines(lines[A.j], lines[B.j]),
+      ];
+      if (pts.some((pt) => !pt || pt.x < -margin || pt.y < -margin || pt.x > w - 1 + margin || pt.y > h - 1 + margin)) continue;
+      out.push(clampQuad(orderCorners(pts as Point[]), w, h));
+    }
+  }
+  return out;
 }
 
 function insetQuad(q: Quad, px: number): Quad {
@@ -188,7 +420,10 @@ function edgeSupport(map: Mat, q: Quad, samplesPerSide = 60): number {
       const x = Math.round(a.x + (b.x - a.x) * t);
       const y = Math.round(a.y + (b.y - a.y) * t);
       total++;
-      if (x >= 0 && y >= 0 && x < w && y < h && data[y * w + x]) hit++;
+      // A side lying on the frame border (page continues outside the photo)
+      // has no visible edge; count it as supported.
+      if (x <= 1 || y <= 1 || x >= w - 2 || y >= h - 2) hit++;
+      else if (data[y * w + x]) hit++;
     }
   }
   return hit / total;

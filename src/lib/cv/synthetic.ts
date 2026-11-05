@@ -91,6 +91,8 @@ export interface SceneOptions {
   shadow?: boolean;
   /** Add a blown-out reflection blob. */
   glare?: boolean;
+  /** Table colour (RGB). Default: mid-brown wood. */
+  table?: [number, number, number];
   seed?: number;
 }
 
@@ -126,11 +128,12 @@ export function makeScene(cv: CV, o: SceneOptions): Scene {
 
   const rgba = scoped((s) => {
     // Table: warm wood colour, grain streaks and sensor noise.
-    const scene = s.add(new cv.Mat(H, W, cv.CV_8UC3, new cv.Scalar(118, 88, 62, 255)));
+    const [tr, tg, tb] = o.table ?? [118, 88, 62];
+    const scene = s.add(new cv.Mat(H, W, cv.CV_8UC3, new cv.Scalar(tr, tg, tb, 255)));
     for (let i = 0; i < 40; i++) {
       const y = r() * H;
-      const c = 95 + r() * 40;
-      cv.line(scene, new cv.Point(0, Math.round(y)), new cv.Point(W, Math.round(y + (r() - 0.5) * 60)), [c, c * 0.75, c * 0.52, 255], 1 + Math.round(r() * 3));
+      const v = 0.85 + r() * 0.3;
+      cv.line(scene, new cv.Point(0, Math.round(y)), new cv.Point(W, Math.round(y + (r() - 0.5) * 60)), [Math.min(255, tr * v), Math.min(255, tg * v), Math.min(255, tb * v), 255], 1 + Math.round(r() * 3));
     }
 
     const from = s.add(cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, docW - 1, 0, docW - 1, docH - 1, 0, docH - 1]));

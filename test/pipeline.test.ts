@@ -73,10 +73,35 @@ describe('S2 boundary detection', () => {
     });
   }
 
+  // Light desks were the failure seen on the first iPhone test (960×1280 photo).
+  // A printed photo's white margin can merge with a light desk; trimming to
+  // the picture itself is acceptable there, hence the looser tolerance.
+  const lightTol = { text: 0.005, music: 0.005, photo: 0.03 } as const;
+  for (const kind of ['text', 'music', 'photo'] as const) {
+    it(`${kind} on a light table, 960×1280 portrait`, () => {
+      const sc = makeScene(cv, { kind, width: 960, height: 1280, table: [222, 219, 212], shadow: kind === 'music' });
+      const d = detectQuad(cv, sc.rgba);
+      const err = Math.max(...d.quad.map((p, k) => dist(p, sc.quad[k])));
+      sc.rgba.delete();
+      sc.doc.delete();
+      expect(d.found).toBe(true);
+      expect(err / Math.hypot(960, 1280)).toBeLessThan(lightTol[kind]);
+    });
+  }
+
+  it('on a near-white table, offers at most a low-confidence guess', () => {
+    const sc = makeScene(cv, { kind: 'text', width: 960, height: 1280, table: [240, 238, 232], shadow: true });
+    const d = detectQuad(cv, sc.rgba);
+    sc.rgba.delete();
+    sc.doc.delete();
+    expect(d.found).toBe(false);
+  });
+
   it('reports "not found" on a photo without a document', () => {
     const sc = makeScene(cv, { kind: 'text', pose: { distance: 1000 } });
     const d = detectQuad(cv, sc.rgba);
     expect(d.found).toBe(false);
+    expect(d.guess).toBe(false);
     expect(d.quad[2]).toEqual({ x: sc.rgba.cols - 1, y: sc.rgba.rows - 1 });
     sc.rgba.delete();
     sc.doc.delete();

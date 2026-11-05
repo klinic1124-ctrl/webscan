@@ -212,7 +212,15 @@ export function App() {
         device: deviceSummary(),
         engine,
         source: source && { width: source.width, height: source.height },
-        detect: detect && { found: detect.found, method: detect.method, edgeSupport: +detect.edgeSupport.toFixed(2), ms: Math.round(detect.ms) },
+        detect: detect && {
+          found: detect.found,
+          guess: detect.guess,
+          method: detect.method,
+          edgeSupport: +detect.edgeSupport.toFixed(2),
+          contrast: detect.contrast,
+          candidates: detect.candidates,
+          ms: Math.round(detect.ms),
+        },
         load: loadTimings,
         scan: result && {
           mode: result.mode,
@@ -310,8 +318,16 @@ export function App() {
           <h2>
             <span className="step">2</span>문서 영역 맞추기
           </h2>
-          {detect && !detect.found && (
-            <p className="alert warn">문서 테두리를 찾지 못했습니다. 네 모서리를 직접 맞춰 주세요. 어두운 바닥 위에 놓고 찍으면 더 잘 찾습니다.</p>
+          {detect && !detect.found && detect.guess && (
+            <p className="alert warn">테두리가 뚜렷하지 않아 추정한 영역입니다. 네 모서리가 종이 끝에 맞는지 확인해 주세요. 종이와 색이 다른 바닥 위에서 찍으면 더 정확합니다.</p>
+          )}
+          {detect && !detect.found && !detect.guess && (
+            <p className="alert warn">문서 테두리를 찾지 못했습니다. 네 모서리를 직접 맞춰 주세요. 종이와 색이 다른 바닥 위에서 찍으면 더 잘 찾습니다.</p>
+          )}
+          {Math.max(source.width, source.height) < 2000 && !source.name.startsWith('sample-') && (
+            <p className="alert warn">
+              사진 해상도가 낮습니다({source.width}×{source.height}). 일부 앱 안의 브라우저는 사진을 줄여서 넘겨 줍니다. Safari나 Chrome에서 직접 열면 원본 해상도로 스캔할 수 있습니다.
+            </p>
           )}
           <CropEditor previewUrl={source.url} width={source.width} height={source.height} quad={quad} onChange={setQuad} />
           <div className="row tools">
@@ -358,6 +374,7 @@ export function App() {
             <span className="tag">{MODE_NAME[result.mode]}{mode === 'auto' ? ' (자동 판별)' : ''}</span>
             <span className="tag mono">{result.width}×{result.height}px</span>
             <span className="tag mono">비율 {result.aspect.ratio.toFixed(3)}{estimatedPaper ? ` ≈ ${PAPER[estimatedPaper].label.split(' ')[0]}` : ''}</span>
+            <span className="tag mono">A4 기준 약 {Math.round(Math.max(result.width, result.height) / 11.69)} dpi</span>
             <span className="tag mono">{(result.blob.size / 1024).toFixed(0)} KB</span>
           </div>
           {result.saturatedFrac > 0.015 && (
@@ -409,7 +426,7 @@ export function App() {
                 <tr>
                   <th>경계 검출</th>
                   <td>
-                    {detect.found ? `성공 · ${detect.method}` : '실패'} · 엣지 일치 {Math.round(detect.edgeSupport * 100)}%
+                    {detect.found ? `성공 · ${detect.method}` : detect.guess ? `추정 · ${detect.method}` : '실패'} · 엣지 일치 {Math.round(detect.edgeSupport * 100)}% · 대비 {detect.contrast}
                   </td>
                 </tr>
               )}
