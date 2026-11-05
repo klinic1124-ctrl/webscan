@@ -17,6 +17,7 @@ import {
   type Point,
   type Quad,
 } from '../geometry';
+import { alignShot, fuseShots } from './glare';
 import { scoped, type CV, type Mat, type MatScope } from './loadCv';
 
 export type Mode = 'auto' | 'color' | 'gray' | 'bw' | 'photo';
@@ -459,7 +460,21 @@ export interface ProcessResult {
   /** Share of the page that is clipped white (glare / over-exposure). */
   saturatedFrac: number;
   classify: Classification;
+  /** Present when extra shots were fused to remove reflections. */
+  fusion?: {
+    shots: number;
+    /** Per extra shot: fine alignment succeeded (else corner alignment only). */
+    aligned: boolean[];
+    /** Share of the page taken from the extra shots. */
+    replacedFrac: number;
+  };
   timings: Record<string, number>;
+}
+
+/** Another photo of the same page (for reflection removal). */
+export interface ExtraShot {
+  rgba: Mat;
+  quad: Quad;
 }
 
 export interface Classification {
@@ -470,7 +485,7 @@ export interface Classification {
   suggested: ResolvedMode;
 }
 
-export function processPage(cv: CV, rgba: Mat, quad: Quad, opts: ProcessOptions): ProcessResult {
+export function processPage(cv: CV, rgba: Mat, quad: Quad, opts: ProcessOptions, extras: ExtraShot[] = []): ProcessResult {
   const timings: Record<string, number> = {};
   const lap = (name: string, t: number) => (timings[name] = Math.round((now() - t) * 10) / 10);
 
@@ -479,10 +494,35 @@ export function processPage(cv: CV, rgba: Mat, quad: Quad, opts: ProcessOptions)
     const aspect = resolveRatio(opts.aspect, quad, rgba.cols, rgba.rows);
     const size = outputSize(quad, aspect.ratio, opts.maxLong ?? 4000);
     const warpedRgba = s.add(warpQuad(cv, rgba, quad, size.width, size.height));
-    const rgb = s.add(new cv.Mat());
+    let rgb = s.add(new cv.Mat());
     cv.cvtColor(warpedRgba, rgb, cv.COLOR_RGBA2RGB);
     warpedRgba.delete();
     lap('warp', t);
+
+    // S6 · Fuse extra shots (each flattened to the same page size, then
+    // finely aligned to the main shot) to remove reflections.
+    let fusion: ProcessResult['fusion'];
+    if (extras.length) {
+      t = now();
+      const shots: Mat[] = [rgb];
+      const aligned: boolean[] = [];
+      for (const ex of extras) {
+        const wr = warpQuad(cv, ex.rgba, ex.quad, size.width, size.height);
+        const er = new cv.Mat();
+        cv.cvtColor(wr, er, cv.COLOR_RGBA2RGB);
+        wr.delete();
+        const a = alignShot(cv, rgb, er);
+        er.delete();
+        shots.push(s.add(a.aligned));
+        aligned.push(a.ok);
+      }
+      const f = fuseShots(cv, shots);
+      shots.slice(1).forEach((m) => m.delete());
+      rgb.delete();
+      rgb = s.add(f.fused);
+      fusion = { shots: shots.length, aligned, replacedFrac: f.replacedFrac };
+      lap('fuse', t);
+    }
 
     t = now();
     const small = s.add(resizeLong(cv, rgb, 600));
@@ -518,6 +558,7 @@ export function processPage(cv: CV, rgba: Mat, quad: Quad, opts: ProcessOptions)
       height: size.height,
       saturatedFrac,
       classify,
+      fusion,
       timings,
     };
   });

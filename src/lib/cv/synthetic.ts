@@ -91,6 +91,11 @@ export interface SceneOptions {
   shadow?: boolean;
   /** Add a blown-out reflection blob. */
   glare?: boolean;
+  /**
+   * Where the reflection sits, as a fraction of the page (0..1, 0..1).
+   * Default: a little right of and above the page centre.
+   */
+  glareAt?: { x: number; y: number };
   /** Table colour (RGB). Default: mid-brown wood. */
   table?: [number, number, number];
   seed?: number;
@@ -173,8 +178,14 @@ export function makeScene(cv: CV, o: SceneOptions): Scene {
 
     if (o.glare) {
       const g = s.add(new cv.Mat(H, W, cv.CV_32FC3, new cv.Scalar(0, 0, 0)));
-      const c = quad.reduce((a, p) => ({ x: a.x + p.x / 4, y: a.y + p.y / 4 }), { x: 0, y: 0 });
-      cv.ellipse(g, new cv.Point(Math.round(c.x + W * 0.05), Math.round(c.y - H * 0.08)), new cv.Size(Math.round(W * 0.06), Math.round(H * 0.04)), 30, 0, 360, new cv.Scalar(400, 400, 400), -1);
+      // Page point → image point through the page homography.
+      const at = o.glareAt ?? { x: 0.6, y: 0.4 };
+      const m: Float64Array = M.data64F;
+      const px = at.x * (docW - 1);
+      const py = at.y * (docH - 1);
+      const z = m[6] * px + m[7] * py + m[8];
+      const c = { x: (m[0] * px + m[1] * py + m[2]) / z, y: (m[3] * px + m[4] * py + m[5]) / z };
+      cv.ellipse(g, new cv.Point(Math.round(c.x), Math.round(c.y)), new cv.Size(Math.round(W * 0.06), Math.round(H * 0.04)), 30, 0, 360, new cv.Scalar(400, 400, 400), -1);
       cv.GaussianBlur(g, g, new cv.Size(0, 0), 12);
       cv.add(sf, g, sf);
     }

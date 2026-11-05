@@ -73,3 +73,14 @@ export function scoped<T>(fn: (s: MatScope) => T): T {
     s.dispose();
   }
 }
+
+/**
+ * Deep copy of a Mat. Do not use `Mat.clone()` with this OpenCV.js build: it
+ * returns a Mat that shares pixel memory with the original, so writing to
+ * the "clone" silently changes the source (and deleting either frees both).
+ */
+export function copyMat(cv: CV, m: Mat): Mat {
+  const d = new cv.Mat();
+  m.copyTo(d);
+  return d;
+}
