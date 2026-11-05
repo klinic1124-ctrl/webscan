@@ -263,11 +263,13 @@ interface CardProps {
 
 function PageCard({ page, index, count, busy, confirming, onEdit, onMove, onAskDelete, onCancelDelete, onDelete }: CardProps) {
   const thumb = useObjectUrl(page.thumb);
+  const [broken, setBroken] = useState(false);
   const check = page.detect === 'guess' || page.detect === 'none';
   return (
     <li className="page-card">
       <button className="thumb" onClick={onEdit} disabled={busy} aria-label={`${index + 1}쪽 편집`}>
-        {thumb && <img src={thumb} alt="" />}
+        {thumb && !broken && <img src={thumb} alt="" onError={() => setBroken(true)} />}
+        {broken && <span className="thumb-missing">미리보기를 불러오지 못했습니다</span>}
         <span className="num mono">{index + 1}</span>
         {check && <span className="flag">확인 필요</span>}
       </button>

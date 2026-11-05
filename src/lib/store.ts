@@ -37,9 +37,38 @@ export interface PageRecord {
   thumb: Blob;
 }
 
+/**
+ * Images are stored as raw bytes, not Blobs. iOS WebKit (notably in-app
+ * browsers) can fail to display or read Blobs that come back out of
+ * IndexedDB ("WebKitBlobResource error 1"); ArrayBuffers are copied into
+ * memory and always work. Pages saved earlier as Blobs are still read.
+ */
+interface Bytes {
+  buf: ArrayBuffer;
+  type: string;
+}
+const BINARY = ['source', 'result', 'thumb'] as const;
+type BinaryKey = (typeof BINARY)[number];
+type StoredPage = Omit<PageRecord, BinaryKey> & Record<BinaryKey, Bytes | Blob>;
+
+async function toStored(p: PageRecord): Promise<StoredPage> {
+  const out = { ...p } as unknown as StoredPage;
+  for (const k of BINARY) out[k] = { buf: await p[k].arrayBuffer(), type: p[k].type };
+  return out;
+}
+
+function fromStored(s: StoredPage): PageRecord {
+  const out = { ...s } as unknown as PageRecord;
+  for (const k of BINARY) {
+    const v = s[k];
+    out[k] = v && 'buf' in v ? new Blob([v.buf], { type: v.type }) : (v as Blob);
+  }
+  return out;
+}
+
 interface Schema extends DBSchema {
   docs: { key: string; value: DocRecord };
-  pages: { key: string; value: PageRecord; indexes: { docId: string } };
+  pages: { key: string; value: StoredPage; indexes: { docId: string } };
 }
 
 export type Store = ReturnType<typeof createStore>;
@@ -115,22 +144,30 @@ export function createStore(dbName = 'scanner') {
       if (!doc) return [];
       const pages = await d.getAllFromIndex('pages', 'docId', docId);
       const byId = new Map(pages.map((p) => [p.id, p]));
-      return doc.pageIds.map((id) => byId.get(id)).filter((p): p is PageRecord => !!p);
+      return doc.pageIds
+        .map((id) => byId.get(id))
+        .filter((p): p is StoredPage => !!p)
+        .map(fromStored);
     },
 
     async getPage(id: string): Promise<PageRecord | undefined> {
-      return (await db()).get('pages', id);
+      const p = await (await db()).get('pages', id);
+      return p && fromStored(p);
     },
 
     /** Inserts a new page (appended, or at `index`) or replaces an existing one. */
     async savePage(page: Omit<PageRecord, 'id' | 'createdAt'> & { id?: string; createdAt?: number }, index?: number): Promise<PageRecord> {
       const d = await db();
+      // Read the bytes first: an IndexedDB transaction closes if we await
+      // anything else while it is open.
+      const stored = await toStored({ ...page, id: page.id ?? uid(), createdAt: page.createdAt ?? 0 });
       const tx = d.transaction(['docs', 'pages'], 'readwrite');
       const doc = await tx.objectStore('docs').get(page.docId);
       if (!doc) throw new Error('문서를 찾을 수 없습니다');
       const existing = page.id ? await tx.objectStore('pages').get(page.id) : undefined;
-      const rec: PageRecord = { ...page, id: page.id ?? uid(), createdAt: page.createdAt ?? existing?.createdAt ?? Date.now() };
-      await tx.objectStore('pages').put(rec);
+      stored.createdAt = page.createdAt ?? existing?.createdAt ?? Date.now();
+      const rec: PageRecord = { ...page, id: stored.id, createdAt: stored.createdAt };
+      await tx.objectStore('pages').put(stored);
       const pageIds = doc.pageIds.includes(rec.id)
         ? doc.pageIds
         : index === undefined

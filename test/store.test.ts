@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
+import { openDB } from 'idb';
 import { createStore, moveItem, type PageRecord } from '../src/lib/store';
 import type { Quad } from '../src/lib/geometry';
 
@@ -79,5 +80,28 @@ describe('store', () => {
     await s.deleteDoc(first.id);
     expect(await s.getPage(p.id)).toBeUndefined();
     expect((await s.listDocs()).map((d) => d.id)).toEqual([second.id]);
+  });
+
+  it('stores images as bytes and still reads pages saved as Blobs', async () => {
+    const name = `test-${n++}`;
+    const s = createStore(name);
+    const doc = await s.createDoc();
+    const a = await s.savePage(page(doc.id, 'a'));
+
+    const raw = await openDB(name);
+    const rec = await raw.get('pages', a.id);
+    expect(rec.thumb.buf).toBeInstanceOf(ArrayBuffer);
+    expect(rec.thumb.type).toBe('image/jpeg');
+
+    // A page written by the earlier version (Blob fields) is still readable.
+    const old = { ...page(doc.id, 'old'), id: 'legacy', createdAt: 1 };
+    await raw.put('pages', old);
+    await raw.put('docs', { ...(await raw.get('docs', doc.id)), pageIds: [a.id, 'legacy'] });
+    raw.close();
+
+    const pages = await s.getPages(doc.id);
+    expect(await pages[0].thumb.text()).toBe('th-a');
+    expect(pages[0].thumb.type).toBe('image/jpeg');
+    expect(await pages[1].result.text()).toBe('res-old');
   });
 });
