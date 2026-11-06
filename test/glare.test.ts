@@ -184,7 +184,9 @@ describe('user-adjustable sensitivity', () => {
 // a smooth brightness model cannot follow that, and once swapped clean
 // areas for darker ones (a grey band along the page edge).
 describe('very different lighting between the photos', () => {
-  for (const sens of [0, 50, 100]) {
+  // 25..75 is the old full range; the ends beyond are deliberately extreme
+  // (0: blown-out only, 100: darkest-pixel composite).
+  for (const sens of [25, 50, 75]) {
     it(`sensitivity ${sens}: reflection removed, clean areas untouched`, () => {
       const a = makeScene(cv, { kind: 'photo', shadow: true, glare: true, glareAt: { x: 0.6, y: 0.35 }, width: 2400, height: 1800, seed: 3 });
       const t = makeScene(cv, { kind: 'photo', shadow: true, glare: false, width: 2400, height: 1800, seed: 3 });
@@ -218,4 +220,31 @@ describe('very different lighting between the photos', () => {
       [a.rgba, a.doc, t.rgba, t.doc, b.rgba, b.doc, A, T, al.aligned, fused, gA, gT, glare, clean].forEach((x) => x.delete());
     });
   }
+});
+
+// Deep phone shadow in the second photo: its darker area must not be taken
+// for "the main photo is brighter = reflection" at the default sensitivity.
+it('default sensitivity: a deep shadow in the second photo is not swapped in', () => {
+  const base = { kind: 'music', width: 1600, height: 1200, seed: 41 } as const;
+  const a = makeScene(cv, { ...base, pose: { rx: 15, ry: -4, rz: 2 }, glare: true, glareAt: { x: 0.6, y: 0.35 } });
+  const t = makeScene(cv, { ...base, pose: { rx: 15, ry: -4, rz: 2 }, glare: false });
+  const b = makeScene(cv, { ...base, pose: { rx: 26, ry: 8, rz: -4 }, glare: true, glareAt: { x: 0.3, y: 0.75 }, shadow: true });
+  const A = rgbWarp(a.rgba, a.quad);
+  const T = rgbWarp(t.rgba, t.quad);
+  const al = alignExtra(cv, A, b.rgba, b.quad);
+  const { fused } = fuseShots(cv, [A, al.aligned]);
+  const gA = new cv.Mat();
+  const gT = new cv.Mat();
+  cv.cvtColor(A, gA, cv.COLOR_RGB2GRAY);
+  cv.cvtColor(T, gT, cv.COLOR_RGB2GRAY);
+  cv.GaussianBlur(gA, gA, new cv.Size(0, 0), 1.5);
+  cv.GaussianBlur(gT, gT, new cv.Size(0, 0), 1.5);
+  const glare = new cv.Mat();
+  cv.absdiff(gA, gT, glare);
+  cv.threshold(glare, glare, 8, 255, cv.THRESH_BINARY);
+  const clean = new cv.Mat();
+  cv.bitwise_not(glare, clean);
+  expect(meanDiff(fused, T, clean)).toBeLessThan(1);
+  expect(1 - meanDiff(fused, T, glare) / meanDiff(A, T, glare)).toBeGreaterThan(0.85);
+  [a.rgba, a.doc, t.rgba, t.doc, b.rgba, b.doc, A, T, al.aligned, fused, gA, gT, glare, clean].forEach((x) => x.delete());
 });

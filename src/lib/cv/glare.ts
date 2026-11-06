@@ -316,25 +316,40 @@ export interface GlareParams {
    * lighting differences look alike; small values play safe.
    */
   lightScale: number;
+  /**
+   * Largest brightness ratio (this shot / darkest shot) still taken as a
+   * reflection where this shot is not blown out (< 240). A reflection that
+   * strong mostly saturates; a big ratio on unsaturated areas usually means
+   * the other photo is in shadow there.
+   */
+  maxRatio: number;
 }
 
-const lerp3 = (t: number, a: number, b: number, c: number) => (t <= 0.5 ? a + (b - a) * (t / 0.5) : b + (c - b) * ((t - 0.5) / 0.5));
+/** Piecewise-linear interpolation through values at 0, 25, 50, 75, 100 %. */
+const curve = (t: number, v: [number, number, number, number, number]) => {
+  const x = Math.min(1, Math.max(0, t)) * 4;
+  const i = Math.min(3, Math.floor(x));
+  return v[i] + (v[i + 1] - v[i]) * (x - i);
+};
 
 /**
  * Detection parameters for a user-facing sensitivity 0..100. 50 is the
- * tuned default; lower only takes clear reflections, higher also takes
- * faint sheen (and risks replacing areas that were merely a bit brighter).
+ * tuned default. Towards 0 only blown-out reflections are replaced; towards
+ * 100 any area brighter than in another photo is taken from it — close to a
+ * "darkest pixel" composite, which also removes faint sheen but can bring in
+ * another photo's shadow.
  */
 export function glareParams(sensitivity = 50): GlareParams {
-  const t = Math.min(1, Math.max(0, sensitivity / 100));
+  const t = sensitivity / 100;
   return {
-    tol: lerp3(t, 12, 6, 2),
-    soft: lerp3(t, 10, 6, 3),
-    selfLo: lerp3(t, 8, 3, -6),
-    selfHi: lerp3(t, 18, 11, 2),
-    floorLo: lerp3(t, 100, 60, 30),
-    floorHi: lerp3(t, 150, 100, 60),
-    lightScale: lerp3(t, 0.04, 0.1, 0.3),
+    tol: curve(t, [22, 12, 6, 2, 0.5]),
+    soft: curve(t, [16, 10, 6, 3, 1.5]),
+    selfLo: curve(t, [16, 8, 3, -6, -40]),
+    selfHi: curve(t, [32, 18, 11, 2, -25]),
+    floorLo: curve(t, [160, 100, 60, 30, 5]),
+    floorHi: curve(t, [215, 150, 100, 60, 20]),
+    lightScale: curve(t, [0.025, 0.04, 0.1, 0.3, 1]),
+    maxRatio: curve(t, [1.2, 1.3, 1.45, 1.6, 99]),
   };
 }
 
@@ -495,6 +510,19 @@ export function fuseShots(cv: CV, shots: Mat[], opts: { sensitivity?: number; wi
       cv.threshold(exG, exG, 0, 0, cv.THRESH_TOZERO);
       cv.threshold(exG, exG, 1, 0, cv.THRESH_TRUNC);
       cv.multiply(ex, exG, ex);
+      // Ratio limit (see GlareParams.maxRatio): fade out between maxRatio and
+      // 1.15 × maxRatio, unless this shot is near white there.
+      const ratio = s.add(new cv.Mat());
+      cv.max(lmin, s.add(new cv.Mat(h, w, cv.CV_32F, new cv.Scalar(1))), ratio);
+      cv.divide(l, ratio, ratio);
+      const span = 0.15 * P.maxRatio;
+      ratio.convertTo(ratio, cv.CV_32F, -1 / span, (P.maxRatio + span) / span);
+      cv.threshold(ratio, ratio, 0, 0, cv.THRESH_TOZERO);
+      cv.threshold(ratio, ratio, 1, 0, cv.THRESH_TRUNC);
+      const sat = s.add(new cv.Mat());
+      cv.threshold(l, sat, 240, 1, cv.THRESH_BINARY);
+      cv.max(ratio, sat, ratio);
+      cv.multiply(ex, ratio, ex);
       // Very dark areas are left alone (noise); see GlareParams.floorLo/Hi.
       const gate = s.add(new cv.Mat());
       l.convertTo(gate, cv.CV_32F, 1 / (P.floorHi - P.floorLo), -P.floorLo / (P.floorHi - P.floorLo));

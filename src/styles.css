@@ -319,3 +319,4 @@ p { margin: 0; }
 .result-stack { position: relative; display: inline-block; max-width: 100%; }
 .result-stack img { display: block; }
 .result-stack .overlay { position: absolute; inset: 0; width: 100%; height: 100%; box-shadow: none; pointer-events: none; }
+.hint.caution { color: var(--mark); }

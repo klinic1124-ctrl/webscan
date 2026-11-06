@@ -303,9 +303,14 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
                   aria-describedby="glare-sens-hint"
                 />
                 <div className="sens-scale" aria-hidden="true">
-                  <span>뚜렷한 반사만</span>
-                  <span>은은한 번들거림까지</span>
+                  <span>날아간 반사만</span>
+                  <span>어두운 쪽을 모두 고름</span>
                 </div>
+                {sens > 70 && (
+                  <p className="hint caution">
+                    아주 높은 민감도에서는 다른 사진의 그림자나 어두운 부분까지 섞일 수 있습니다. 주황색 표시로 확인해 주세요.
+                  </p>
+                )}
                 <p id="glare-sens-hint" className="hint">
                   반사가 덜 지워졌으면 오른쪽으로, 반사가 아닌 부분까지 바뀌면 왼쪽으로 옮기세요. 결과의 주황색이 다른 사진에서 가져온 부분입니다.
                   {sens !== DEFAULT_GLARE_SENSITIVITY && (
