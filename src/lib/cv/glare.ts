@@ -289,93 +289,28 @@ export function fuseShots(cv: CV, shots: Mat[]): FuseResult {
       return g;
     });
 
-    // Per-shot gain map R_i: matches each shot's low-frequency brightness
-    // (exposure, shading, a phone shadow) to the main shot. The page content
-    // is identical in every shot, so the brightness ratio is smooth except
-    // where a reflection sits in one of them. A wide median of the (log)
-    // ratio ignores those blobs as outliers while keeping real shading.
+    // Per-shot gain map R_i: matches each shot's brightness (exposure,
+    // overall lighting gradient) to the main shot. It is deliberately a
+    // smooth page-wide surface — log ratio fitted by a robust quadratic — so
+    // a reflection, even a broad soft sheen, cannot be absorbed as "lighting":
+    // it is an outlier to the fit. Local shading such as a phone shadow is
+    // not modelled here; the self-brightness gate below keeps a clean area
+    // of the main shot from being replaced by a shadowed one.
     const lw = Math.max(16, Math.round(w / 8));
     const lh = Math.max(16, Math.round(h / 8));
-    const lowLum = lum8.map((g) => {
-      const t = s.add(resizeTo(cv, g, lw, lh, cv.INTER_AREA));
-      const f = s.add(new cv.Mat());
-      t.convertTo(f, cv.CV_32F, 1, 1);
-      return f;
-    });
-    const medK = odd(Math.max(lw, lh) * 0.35);
-    const logRatio = (i: number) => {
-      const r = s.add(new cv.Mat());
-      cv.divide(lowLum[0], lowLum[i], r);
-      cv.log(r, r);
-      return r;
-    };
-    // Pass 1: wide median — robust to reflections, but blurs shadow edges.
-    const coarse = shots.map((_, i) => {
-      if (i === 0) return s.add(new cv.Mat(lh, lw, cv.CV_32F, new cv.Scalar(0)));
-      const enc = s.add(new cv.Mat());
-      logRatio(i).convertTo(enc, cv.CV_8U, 64, 128); // ln(ratio) ∈ [-2, 2] → 0..255
-      cv.medianBlur(enc, enc, medK);
-      const r = s.add(new cv.Mat());
-      enc.convertTo(r, cv.CV_32F, 1 / 64, -2);
-      return r;
-    });
-    // Reflection candidates from pass 1 (clearly brighter than the darkest shot).
-    const normLow = lowLum.map((l, i) => {
-      const e = s.add(new cv.Mat());
-      cv.exp(coarse[i], e);
-      const n = s.add(new cv.Mat());
-      cv.multiply(l, e, n);
-      return n;
-    });
-    let lowMin = normLow[0];
-    for (const n of normLow.slice(1)) {
-      const next = s.add(new cv.Mat());
-      cv.min(lowMin, n, next);
-      lowMin = next;
-    }
-    const k3 = s.add(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3)));
-    const glareLow = normLow.map((n) => {
-      const d = s.add(new cv.Mat());
-      cv.subtract(n, lowMin, d);
-      const m = s.add(new cv.Mat());
-      cv.threshold(d, m, 20, 255, cv.THRESH_BINARY);
-      const bright = s.add(new cv.Mat());
-      cv.threshold(n, bright, 150, 255, cv.THRESH_BINARY);
-      cv.bitwise_and(m, bright, m);
-      const m8 = s.add(new cv.Mat());
-      m.convertTo(m8, cv.CV_8U);
-      cv.dilate(m8, m8, k3, new cv.Point(-1, -1), 2);
-      return m8;
-    });
-    // Pass 2: the ratio smoothed only over pixels that are reflection-free
-    // in both shots (normalised convolution) — keeps shadow edges sharp.
-    const sigma = Math.max(1, Math.max(lw, lh) * 0.04);
+    const lowLum = lum8.map((g) => s.add(resizeTo(cv, g, lw, lh, cv.INTER_AREA)));
     const gains: Mat[] = shots.map((_, i) => {
       if (i === 0) return s.add(new cv.Mat(h, w, cv.CV_32F, new cv.Scalar(1)));
-      const bad = s.add(new cv.Mat());
-      cv.bitwise_or(glareLow[0], glareLow[i], bad);
-      const valid = s.add(new cv.Mat());
-      cv.bitwise_not(bad, valid);
-      const vf = s.add(new cv.Mat());
-      valid.convertTo(vf, cv.CV_32F, 1 / 255);
-      const num = s.add(new cv.Mat());
-      cv.multiply(logRatio(i), vf, num);
-      cv.GaussianBlur(num, num, new cv.Size(0, 0), sigma);
-      cv.GaussianBlur(vf, vf, new cv.Size(0, 0), sigma);
-      const den = s.add(new cv.Mat());
-      cv.max(vf, s.add(new cv.Mat(lh, lw, cv.CV_32F, new cv.Scalar(1e-3))), den);
-      const fine = s.add(new cv.Mat());
-      cv.divide(num, den, fine);
-      // Where almost nothing nearby was usable, fall back to pass 1.
-      const sparse = s.add(new cv.Mat());
-      cv.threshold(vf, sparse, 0.15, 255, cv.THRESH_BINARY_INV);
-      const sparse8 = s.add(new cv.Mat());
-      sparse.convertTo(sparse8, cv.CV_8U);
-      coarse[i].copyTo(fine, sparse8);
-      cv.exp(fine, fine);
-      cv.threshold(fine, fine, 2, 0, cv.THRESH_TRUNC);
-      cv.max(fine, s.add(new cv.Mat(lh, lw, cv.CV_32F, new cv.Scalar(0.5))), fine);
-      return s.add(resizeTo(cv, fine, w, h, cv.INTER_LINEAR));
+      const coef = robustQuadratic(lowLum[0].data as Uint8Array, lowLum[i].data as Uint8Array, lw, lh);
+      const g = s.add(new cv.Mat(lh, lw, cv.CV_32F));
+      const gd: Float32Array = g.data32F;
+      for (let y = 0; y < lh; y++) {
+        for (let x = 0; x < lw; x++) {
+          const v = quadAt(coef, x, y, lw, lh);
+          gd[y * lw + x] = Math.min(2, Math.max(0.5, Math.exp(v)));
+        }
+      }
+      return s.add(resizeTo(cv, g, w, h, cv.INTER_LINEAR));
     });
 
     // Normalised luminance and the per-pixel darkest shot.
@@ -406,7 +341,7 @@ export function fuseShots(cv: CV, shots: Mat[]): FuseResult {
     // when the brightness matching is imperfect.
     const selfGate = lum8.map((g) => {
       const t = s.add(resizeTo(cv, g, lw, lh, cv.INTER_AREA));
-      cv.medianBlur(t, t, medK);
+      cv.medianBlur(t, t, odd(Math.max(lw, lh) * 0.7)); // wide: a broad sheen must not lift its own baseline
       const bg = s.add(new cv.Mat());
       s.add(resizeTo(cv, t, w, h, cv.INTER_LINEAR)).convertTo(bg, cv.CV_32F);
       const own = s.add(new cv.Mat());
@@ -423,8 +358,9 @@ export function fuseShots(cv: CV, shots: Mat[]): FuseResult {
       const ex = s.add(new cv.Mat());
       cv.subtract(l, lmin, ex);
       cv.threshold(ex, ex, TOL, 0, cv.THRESH_TOZERO);
+      // Very dark areas are left alone (noise); glare is evident from ~60 up.
       const gate = s.add(new cv.Mat());
-      l.convertTo(gate, cv.CV_32F, 1 / 50, -150 / 50);
+      l.convertTo(gate, cv.CV_32F, 1 / 40, -60 / 40);
       cv.threshold(gate, gate, 0, 0, cv.THRESH_TOZERO);
       cv.threshold(gate, gate, 1, 0, cv.THRESH_TRUNC);
       cv.multiply(ex, gate, ex);
@@ -497,4 +433,80 @@ export function fuseShots(cv: CV, shots: Mat[]): FuseResult {
     }
     return { fused, replacedFrac };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Robust smooth brightness model between two shots
+
+/** Value of the quadratic surface c·[1,u,v,u²,uv,v²] at pixel (x, y), u,v ∈ [-1, 1]. */
+function quadAt(c: number[], x: number, y: number, w: number, h: number): number {
+  const u = (2 * x) / (w - 1) - 1;
+  const v = (2 * y) / (h - 1) - 1;
+  return c[0] + c[1] * u + c[2] * v + c[3] * u * u + c[4] * u * v + c[5] * v * v;
+}
+
+/** Solves the 6×6 system A·x = b (Gaussian elimination, partial pivoting). */
+function solve6(A: number[][], b: number[]): number[] | null {
+  const n = 6;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-12) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((row, i) => row[n] / M[i][i]);
+}
+
+/**
+ * Fits log(main / other) with a quadratic surface over the page using
+ * iteratively reweighted least squares (Tukey biweight). Blown-out and
+ * near-black pixels are left out. Reflections are local, so they end up as
+ * outliers with zero weight.
+ */
+export function robustQuadratic(main: Uint8Array, other: Uint8Array, w: number, h: number): number[] {
+  const ys: number[] = [];
+  const feats: number[][] = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const a = main[y * w + x];
+      const b = other[y * w + x];
+      if (a > 248 || b > 248 || a < 12 || b < 12) continue;
+      const u = (2 * x) / (w - 1) - 1;
+      const v = (2 * y) / (h - 1) - 1;
+      feats.push([1, u, v, u * u, u * v, v * v]);
+      ys.push(Math.log(a / b));
+    }
+  }
+  if (ys.length < 30) return [0, 0, 0, 0, 0, 0];
+  let wts = new Array(ys.length).fill(1);
+  let coef = [0, 0, 0, 0, 0, 0];
+  for (let it = 0; it < 8; it++) {
+    const A = Array.from({ length: 6 }, () => new Array(6).fill(0));
+    const bv = new Array(6).fill(0);
+    for (let i = 0; i < ys.length; i++) {
+      const f = feats[i];
+      const wi = wts[i];
+      if (!wi) continue;
+      for (let r = 0; r < 6; r++) {
+        bv[r] += wi * f[r] * ys[i];
+        for (let c = 0; c < 6; c++) A[r][c] += wi * f[r] * f[c];
+      }
+    }
+    for (let d = 0; d < 6; d++) A[d][d] += 1e-6;
+    const next = solve6(A, bv);
+    if (!next) break;
+    coef = next;
+    const res = ys.map((y, i) => y - feats[i].reduce((acc, f, k) => acc + f * coef[k], 0));
+    const abs = res.map(Math.abs).sort((p, q) => p - q);
+    const scale = Math.max(0.01, 1.4826 * abs[Math.floor(abs.length / 2)]);
+    const cut = 4.685 * scale;
+    wts = res.map((r) => (Math.abs(r) < cut ? (1 - (r / cut) ** 2) ** 2 : 0));
+  }
+  return coef;
 }

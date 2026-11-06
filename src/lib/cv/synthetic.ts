@@ -97,6 +97,13 @@ export interface SceneOptions {
    */
   glareAt?: { x: number; y: number };
   /**
+   * Reflection strength (added brightness at its centre, 0..255 scale;
+   * default 400 = blown out) and size (1 = default spot; larger = broader,
+   * softer sheen).
+   */
+  glareStrength?: number;
+  glareSize?: number;
+  /**
    * Paper not lying flat: smooth wave of this many page pixels (840 px wide
    * page), which no single homography can undo.
    */
@@ -207,8 +214,10 @@ export function makeScene(cv: CV, o: SceneOptions): Scene {
       const py = at.y * (docH - 1);
       const z = m[6] * px + m[7] * py + m[8];
       const c = { x: (m[0] * px + m[1] * py + m[2]) / z, y: (m[3] * px + m[4] * py + m[5]) / z };
-      cv.ellipse(g, new cv.Point(Math.round(c.x), Math.round(c.y)), new cv.Size(Math.round(W * 0.06), Math.round(H * 0.04)), 30, 0, 360, new cv.Scalar(400, 400, 400), -1);
-      cv.GaussianBlur(g, g, new cv.Size(0, 0), 12);
+      const gs = o.glareSize ?? 1;
+      const gv = o.glareStrength ?? 400;
+      cv.ellipse(g, new cv.Point(Math.round(c.x), Math.round(c.y)), new cv.Size(Math.round(W * 0.06 * gs), Math.round(H * 0.04 * gs)), 30, 0, 360, new cv.Scalar(gv, gv, gv), -1);
+      cv.GaussianBlur(g, g, new cv.Size(0, 0), 12 * gs * gs);
       cv.add(sf, g, sf);
     }
 

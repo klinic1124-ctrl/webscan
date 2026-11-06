@@ -114,3 +114,41 @@ describe('reflection removal (two shots)', () => {
     [a.rgba, a.doc, aClean.rgba, aClean.doc, b.rgba, b.doc].forEach((m) => m.delete());
   });
 });
+
+// Weak or broad reflections (a soft sheen rather than a blown-out spot) used
+// to be taken for lighting and left in place.
+describe('mild and broad reflections', () => {
+  const cases = [
+    { kind: 'text', size: 1, strength: 40, min: 0.8 },
+    { kind: 'photo', size: 1, strength: 40, min: 0.85 },
+    { kind: 'music', size: 2, strength: 70, min: 0.6 },
+    { kind: 'text', size: 2, strength: 70, min: 0.6 },
+    { kind: 'photo', size: 2, strength: 70, min: 0.6 },
+  ] as const;
+  for (const c of cases) {
+    it(`${c.kind}, strength ${c.strength}, size ${c.size}: most of it removed`, () => {
+      const base = { kind: c.kind, width: 1600, height: 1200, seed: 41 } as const;
+      const pa = { rx: 15, ry: -4, rz: 2 };
+      const a = makeScene(cv, { ...base, pose: pa, glare: true, glareAt: { x: 0.6, y: 0.35 }, glareStrength: c.strength, glareSize: c.size });
+      const t = makeScene(cv, { ...base, pose: pa, glare: false });
+      const b = makeScene(cv, { ...base, pose: { rx: 26, ry: 8, rz: -4 }, glare: true, glareAt: { x: 0.3, y: 0.75 }, glareStrength: c.strength, glareSize: c.size });
+      const A = rgbWarp(a.rgba, a.quad);
+      const T = rgbWarp(t.rgba, t.quad);
+      const al = alignExtra(cv, A, b.rgba, b.quad);
+      const { fused } = fuseShots(cv, [A, al.aligned]);
+      const gA = new cv.Mat();
+      const gT = new cv.Mat();
+      cv.cvtColor(A, gA, cv.COLOR_RGB2GRAY);
+      cv.cvtColor(T, gT, cv.COLOR_RGB2GRAY);
+      cv.GaussianBlur(gA, gA, new cv.Size(0, 0), 1.5);
+      cv.GaussianBlur(gT, gT, new cv.Size(0, 0), 1.5);
+      const m = new cv.Mat();
+      cv.absdiff(gA, gT, m);
+      cv.threshold(m, m, 8, 255, cv.THRESH_BINARY);
+      const before = meanDiff(A, T, m);
+      const after = meanDiff(fused, T, m);
+      expect(1 - after / before).toBeGreaterThan(c.min);
+      [a.rgba, a.doc, t.rgba, t.doc, b.rgba, b.doc, A, T, al.aligned, fused, gA, gT, m].forEach((x) => x.delete());
+    });
+  }
+});
