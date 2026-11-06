@@ -1,5 +1,6 @@
-# Manual: Actions → "Slim OpenCV.js" → Run workflow. Download the
-# "opencv-slim" artifact and commit its opencv.js to vendor/opencv/.
+# Manual: Actions → "Slim OpenCV.js" → Run workflow (on the working branch).
+# Commits the built vendor/opencv/opencv.js to that branch, and also keeps
+# it as the "opencv-slim" artifact.
 name: Slim OpenCV.js
 on:
   workflow_dispatch:
@@ -7,7 +8,9 @@ on:
       simd:
         description: Build with WebAssembly SIMD
         type: boolean
-        default: false
+        default: true
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,3 +24,11 @@ jobs:
         with:
           name: opencv-slim
           path: vendor/opencv/opencv.js
+      - name: Commit to the branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vendor/opencv/opencv.js
+          git diff --cached --quiet && exit 0
+          git commit -m "Slim OpenCV.js build (simd=${{ inputs.simd }}, run ${{ github.run_id }})"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
