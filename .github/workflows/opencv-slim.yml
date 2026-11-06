@@ -1,6 +1,7 @@
 # Manual: Actions → "Slim OpenCV.js" → Run workflow (on the working branch).
-# Commits the built vendor/opencv/opencv.js to that branch, and also keeps
-# it as the "opencv-slim" artifact.
+# Commits the build to that branch as vendor/opencv/opencv.candidate.js
+# (inactive until tested and renamed to opencv.js), and also keeps it as
+# the "opencv-slim" artifact.
 name: Slim OpenCV.js
 on:
   workflow_dispatch:
@@ -28,7 +29,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add vendor/opencv/opencv.js
+          # Under a name the app does not pick up yet: the deployed site keeps
+          # the current engine until the build has been tested.
+          mv vendor/opencv/opencv.js vendor/opencv/opencv.candidate.js
+          git add vendor/opencv/opencv.candidate.js
           git diff --cached --quiet && exit 0
           git commit -m "Slim OpenCV.js build (simd=${{ inputs.simd }}, run ${{ github.run_id }})"
           git push origin "HEAD:${GITHUB_REF_NAME}"
