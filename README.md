@@ -9,6 +9,7 @@
 
 ## 기능
 
+- 실시간 카메라: 문서 테두리를 화면에 표시하고, 가만히 있으면 자동 촬영. 연속 촬영으로 여러 페이지를 빠르게
 - 촬영 또는 사진 불러오기(여러 장 한꺼번에 가능) → 문서 영역 자동 검출 → 꼭짓점 미세 조정
 - 원근 보정, 그림자 · 조명 얼룩 제거, 컬러 / 회색조 / 흑백 / 사진 모드
 - 반사광 지우기: 같은 페이지를 다른 각도로 1~2장 더 찍어 반사 부분만 채워 합성
@@ -39,6 +40,8 @@ src/
   components/DocumentView.tsx 페이지 목록, 순서, PDF · 이미지 내보내기
   components/Editor.tsx      영역 맞추기, 모드, 미리보기, 저장
   components/CropEditor.tsx  꼭짓점/변 핸들, 돋보기
+  components/LiveCamera.tsx  실시간 카메라, 테두리 표시, 자동·연속 촬영
+  lib/stability.ts           자동 촬영 시점 판정
   components/Metrics.tsx     측정 패널 (개발용)
   lib/store.ts               IndexedDB 보관함
   lib/pdf.ts                 PDF 생성 (pdf-lib)

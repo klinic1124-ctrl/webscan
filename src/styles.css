@@ -320,3 +320,58 @@ p { margin: 0; }
 .result-stack img { display: block; }
 .result-stack .overlay { position: absolute; inset: 0; width: 100%; height: 100%; box-shadow: none; pointer-events: none; }
 .hint.caution { color: var(--mark); }
+
+/* Live camera */
+.cam { position: fixed; inset: 0; z-index: 30; background: #000; color: #fff; overflow: hidden; }
+/* contain: the whole frame is shown — exactly what will be captured */
+.cam-video, .cam-overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.cam-overlay { pointer-events: none; }
+.cam-quad { fill: rgba(79, 195, 201, 0.18); stroke: #4fc3c9; stroke-linejoin: round; }
+.cam-quad.guess { fill: rgba(240, 138, 93, 0.12); stroke: #f08a5d; stroke-dasharray: 18 12; }
+.cam-quad.done { fill: rgba(255, 255, 255, 0.08); stroke: rgba(255, 255, 255, 0.6); }
+.cam-flash { position: absolute; inset: 0; background: #fff; opacity: 0.7; animation: cam-flash 0.18s ease-out forwards; pointer-events: none; }
+@keyframes cam-flash { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .cam-flash { animation-duration: 0.01s; } }
+.cam-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) 24px max(14px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(rgba(0, 0, 0, 0.55), transparent);
+}
+.cam-msg { flex: 1; text-align: center; font-size: 15px; font-weight: 600; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.cam-res { font-size: 11px; opacity: 0.7; min-width: 64px; text-align: right; }
+.cam-icon { appearance: none; border: 0; width: 44px; height: 44px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 18px; cursor: pointer; }
+.cam-error { position: absolute; top: 40%; left: 16px; right: 16px; text-align: center; background: rgba(0, 0, 0, 0.7); padding: 14px; border-radius: 10px; font-size: 15px; }
+.cam-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px max(14px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(14px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+}
+.cam-note { font-size: 12.5px; text-align: center; background: rgba(0, 0, 0, 0.5); padding: 6px 10px; border-radius: 8px; max-width: 520px; }
+.cam-controls { width: 100%; max-width: 520px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; }
+.cam-toggles { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.cam-chip { appearance: none; font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.5); background: rgba(0, 0, 0, 0.35); color: #fff; cursor: pointer; }
+.cam-chip.on { background: #4fc3c9; border-color: #4fc3c9; color: #08282a; font-weight: 700; }
+.cam-shutter { appearance: none; border: 0; background: none; padding: 0; width: 80px; height: 80px; cursor: pointer; }
+.cam-shutter:disabled { opacity: 0.5; }
+.cam-shutter svg { width: 80px; height: 80px; display: block; }
+.cam-ring-bg { fill: none; stroke: rgba(255, 255, 255, 0.85); stroke-width: 5; }
+.cam-ring { fill: none; stroke: #4fc3c9; stroke-width: 6; stroke-linecap: round; transition: stroke-dasharray 0.1s linear; }
+.cam-dot { fill: #fff; }
+.cam-side { display: flex; justify-content: flex-end; }
+.cam-done { appearance: none; font: inherit; font-size: 14px; font-weight: 700; padding: 10px 14px; border-radius: 999px; border: 0; background: #fff; color: #111; cursor: pointer; }
+.cam-native { position: relative; font-size: 13px; color: rgba(255, 255, 255, 0.85); text-decoration: underline; cursor: pointer; padding: 4px 8px; }
+.cam-native input { position: absolute; inset: 0; opacity: 0; width: 100%; }
+.cam-icon:focus-visible, .cam-chip:focus-visible, .cam-shutter:focus-visible, .cam-done:focus-visible { outline: 2px solid #f08a5d; outline-offset: 2px; }

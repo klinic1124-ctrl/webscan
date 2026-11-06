@@ -11,6 +11,8 @@ interface Props {
   onOpen: (docId: string) => void;
   onImport: (files: File[], fromCamera: boolean) => void;
   onSample: (kind: SampleKind) => void;
+  /** Opens the live camera (when the browser supports it). */
+  onCamera?: () => void;
 }
 
 const SAMPLES: { id: SampleKind; label: string }[] = [
@@ -19,7 +21,7 @@ const SAMPLES: { id: SampleKind; label: string }[] = [
   { id: 'photo', label: '사진' },
 ];
 
-export function Library({ store, busy, engineReady, run, onOpen, onImport, onSample }: Props) {
+export function Library({ store, busy, engineReady, run, onOpen, onImport, onSample, onCamera }: Props) {
   const [docs, setDocs] = useState<DocRecord[] | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
 
@@ -48,16 +50,25 @@ export function Library({ store, busy, engineReady, run, onOpen, onImport, onSam
       <section className="panel">
         <h2>새 스캔</h2>
         <div className="row">
-          <label className={`btn primary${disabled ? ' disabled' : ''}`}>
-            <input id="camera" type="file" accept="image/*" capture="environment" onChange={pick(true)} disabled={disabled} />
-            카메라로 촬영
-          </label>
+          {onCamera ? (
+            <button id="live-camera" className="btn primary" onClick={onCamera} disabled={disabled}>
+              카메라로 촬영
+            </button>
+          ) : (
+            <label className={`btn primary${disabled ? ' disabled' : ''}`}>
+              <input id="camera" type="file" accept="image/*" capture="environment" onChange={pick(true)} disabled={disabled} />
+              카메라로 촬영
+            </label>
+          )}
           <label className={`btn${disabled ? ' disabled' : ''}`}>
             <input id="gallery" type="file" accept="image/*" multiple onChange={pick(false)} disabled={disabled} />
             사진 불러오기
           </label>
         </div>
-        <p className="hint">사진을 여러 장 고르면 자동으로 영역을 찾아 한 문서로 묶습니다.</p>
+        <p className="hint">
+          {onCamera ? '카메라 화면에서 문서 테두리가 보이면 가만히 들고 있으세요. 자동으로 찍습니다. "연속 촬영"을 켜면 여러 페이지를 차례로 찍어 한 문서로 묶습니다. ' : ''}
+          사진을 여러 장 고르면 자동으로 영역을 찾아 한 문서로 묶습니다.
+        </p>
         <div className="row samples">
           <span className="hint">시험용 샘플</span>
           {SAMPLES.map((s) => (

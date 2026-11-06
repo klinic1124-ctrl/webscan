@@ -15,6 +15,8 @@ interface Props {
   onImport: (files: File[], fromCamera: boolean) => void;
   onEditPage: (page: PageRecord) => void;
   onError: (msg: string) => void;
+  /** Opens the live camera (when the browser supports it). */
+  onCamera?: () => void;
 }
 
 const SIZES: { id: PdfPageSize; label: string }[] = [
@@ -23,7 +25,7 @@ const SIZES: { id: PdfPageSize; label: string }[] = [
   { id: 'letter', label: 'Letter' },
 ];
 
-export function DocumentView({ store, docId, revision, busy, engineReady, run, onBack, onImport, onEditPage, onError }: Props) {
+export function DocumentView({ store, docId, revision, busy, engineReady, run, onBack, onImport, onEditPage, onError, onCamera }: Props) {
   const [doc, setDoc] = useState<DocRecord | null>(null);
   const [pages, setPages] = useState<PageRecord[]>([]);
   const [name, setName] = useState('');
@@ -154,21 +156,27 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
         )}
 
         <div className="row">
-          <label className={`btn primary${!engineReady || busy ? ' disabled' : ''}`}>
-            <input
-              id="doc-camera"
-              type="file"
-              accept="image/*"
-              capture="environment"
-              disabled={!engineReady || busy}
-              onChange={(e) => {
-                const f = [...(e.target.files ?? [])];
-                e.target.value = '';
-                if (f.length) onImport(f, true);
-              }}
-            />
-            페이지 촬영
-          </label>
+{onCamera ? (
+            <button id="doc-live-camera" className="btn primary" onClick={onCamera} disabled={!engineReady || busy}>
+              페이지 촬영
+            </button>
+          ) : (
+            <label className={`btn primary${!engineReady || busy ? ' disabled' : ''}`}>
+              <input
+                id="doc-camera"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                disabled={!engineReady || busy}
+                onChange={(e) => {
+                  const f = [...(e.target.files ?? [])];
+                  e.target.value = '';
+                  if (f.length) onImport(f, true);
+                }}
+              />
+              페이지 촬영
+            </label>
+          )}
           <label className={`btn${!engineReady || busy ? ' disabled' : ''}`}>
             <input
               id="doc-gallery"

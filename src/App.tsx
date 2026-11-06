@@ -1,8 +1,9 @@
 import { transfer } from 'comlink';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { DocumentView } from './components/DocumentView';
 import { Editor, type EditSession, type SavedPage, type Shot } from './components/Editor';
 import { Library } from './components/Library';
+import { LiveCamera, liveCameraSupported } from './components/LiveCamera';
 import type { DetectResult } from './lib/cv/pipeline';
 import type { SampleKind } from './lib/cv/synthetic';
 import { createStore, requestPersistence, type DetectState, type ExtraShotRecord, type PageRecord } from './lib/store';
@@ -88,6 +89,64 @@ export function App() {
     }
   }, []);
 
+  /** Detects, processes with automatic settings and saves one photo as a page. */
+  const autoPage = async (docId: string, photo: Blob) => {
+    const { info } = await loadSource(photo, 0);
+    const detect = await scanner().detect();
+    const r = await scanner().scan(detect.quad, { mode: 'auto', aspect: 'auto' });
+    await store.savePage({
+      docId,
+      source: photo,
+      rotation: 0,
+      quad: normalizeQuad(detect.quad, info.width, info.height),
+      mode: 'auto',
+      aspect: 'auto',
+      detect: detectStateOf(detect),
+      result: r.blob,
+      resultMode: r.mode,
+      width: r.width,
+      height: r.height,
+      thumb: r.thumb,
+    });
+  };
+
+  // Live camera. In continuous mode each shot becomes a page right away and
+  // the camera stays open; the document is created with the first page.
+  const [camera, setCamera] = useState<{ docId: string | null; saved: number } | null>(null);
+  const cameraDoc = useRef<string | null>(null);
+  const openCamera = (docId: string | null) => {
+    cameraDoc.current = docId;
+    setCamera({ docId, saved: 0 });
+  };
+  const onCameraShot = async (photo: Blob, continuous: boolean) => {
+    if (!continuous) {
+      setCamera(null);
+      importFiles(cameraDoc.current, [new File([photo], 'camera.jpg', { type: photo.type })], true);
+      return;
+    }
+    try {
+      const id = cameraDoc.current ?? (await store.createDoc()).id;
+      cameraDoc.current = id;
+      await autoPage(id, photo);
+      setCamera((c) => (c ? { docId: id, saved: c.saved + 1 } : c));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const closeCamera = () => {
+    const saved = camera?.saved ?? 0;
+    setCamera(null);
+    if (saved > 0 && cameraDoc.current) {
+      setView({ name: 'doc', docId: cameraDoc.current });
+      setRevision((r) => r + 1);
+    }
+  };
+  const cameraNative = (file: File) => {
+    setCamera(null);
+    importFiles(cameraDoc.current, [file], true);
+  };
+  const canLive = liveCameraSupported();
+
   /** One photo → editor; several → processed automatically into the document. */
   const importFiles = (docId: string | null, files: File[], fromCamera: boolean) =>
     void run('사진을 읽는 중', async () => {
@@ -99,23 +158,7 @@ export function App() {
       }
       for (let i = 0; i < files.length; i++) {
         setBusy(`사진 처리 중 ${i + 1}/${files.length}`);
-        const { info } = await loadSource(files[i], 0);
-        const detect = await scanner().detect();
-        const r = await scanner().scan(detect.quad, { mode: 'auto', aspect: 'auto' });
-        await store.savePage({
-          docId: id,
-          source: files[i],
-          rotation: 0,
-          quad: normalizeQuad(detect.quad, info.width, info.height),
-          mode: 'auto',
-          aspect: 'auto',
-          detect: detectStateOf(detect),
-          result: r.blob,
-          resultMode: r.mode,
-          width: r.width,
-          height: r.height,
-          thumb: r.thumb,
-        });
+        await autoPage(id, files[i]);
       }
       setView({ name: 'doc', docId: id });
       setRevision((r) => r + 1);
@@ -238,6 +281,7 @@ export function App() {
           run={run}
           onOpen={(docId) => setView({ name: 'doc', docId })}
           onImport={(files, cam) => importFiles(null, files, cam)}
+          onCamera={canLive ? () => openCamera(null) : undefined}
           onSample={startSample}
         />
       )}
@@ -251,6 +295,7 @@ export function App() {
           run={run}
           onBack={() => setView({ name: 'library' })}
           onImport={(files, cam) => importFiles(view.docId, files, cam)}
+          onCamera={canLive ? () => openCamera(view.docId) : undefined}
           onEditPage={editPage}
           onError={setError}
         />
@@ -264,6 +309,10 @@ export function App() {
           onCancel={() => cancelEdit(view.session)}
           onSave={savePage}
         />
+      )}
+
+      {camera && (
+        <LiveCamera continuous={false} saved={camera.saved} onShot={onCameraShot} onNativePhoto={cameraNative} onClose={closeCamera} />
       )}
 
       {busy && (

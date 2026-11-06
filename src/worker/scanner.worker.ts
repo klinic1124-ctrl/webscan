@@ -225,6 +225,20 @@ const api = {
   },
 
   /**
+   * Page outline in one live-camera frame (small, ~640 px). Leaves the
+   * loaded photos alone. Corners are in the frame's pixels.
+   */
+  async detectFrame(bitmap: ImageBitmap): Promise<DetectResult & { width: number; height: number }> {
+    const c = await ensureCv();
+    const mat = await bitmapToMat(bitmap);
+    try {
+      return { ...detectQuad(c, mat), width: mat.cols, height: mat.rows };
+    } finally {
+      mat.delete();
+    }
+  },
+
+  /**
    * Processes the page. `extraQuads[i]` is the page outline in extra shot
    * i + 1; extra shots without a quad are ignored.
    */
