@@ -2,7 +2,7 @@
 // main shot rendered again without the reflection (same pose and lighting).
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadCv, type CV, type Mat } from '../src/lib/cv/loadCv';
-import { alignShot, fuseShots } from '../src/lib/cv/glare';
+import { alignExtra, fuseShots } from '../src/lib/cv/glare';
 import { detectQuad, processPage, warpQuad } from '../src/lib/cv/pipeline';
 import { makeScene, type SampleKind } from '../src/lib/cv/synthetic';
 import type { Quad } from '../src/lib/geometry';
@@ -58,8 +58,7 @@ describe('reflection removal (two shots)', () => {
         const { a, aClean, b } = scenes(kind, shadowB);
         const A = rgbWarp(a.rgba, a.quad);
         const T = rgbWarp(aClean.rgba, aClean.quad);
-        const B0 = rgbWarp(b.rgba, b.quad);
-        const al = alignShot(cv, A, B0);
+        const al = alignExtra(cv, A, b.rgba, b.quad);
         const { fused, replacedFrac } = fuseShots(cv, [A, al.aligned]);
 
         // Where the main shot has its reflection.
@@ -78,7 +77,7 @@ describe('reflection removal (two shots)', () => {
         const before = meanDiff(A, T, glare);
         const after = meanDiff(fused, T, glare);
         const elsewhere = meanDiff(fused, T, clean);
-        console.log(kind, { shadowB, before: before.toFixed(1), after: after.toFixed(1), elsewhere: elsewhere.toFixed(2), replacedFrac: replacedFrac.toFixed(3), aligned: al.ok, inliers: al.inliers });
+        console.log(kind, { shadowB, before: before.toFixed(1), after: after.toFixed(1), elsewhere: elsewhere.toFixed(2), replacedFrac: replacedFrac.toFixed(3), aligned: al.ok, method: al.method, ms: al.ms });
 
         expect(before).toBeGreaterThan(40);
         expect(after).toBeLessThan(before * 0.25);
@@ -86,7 +85,7 @@ describe('reflection removal (two shots)', () => {
         expect(replacedFrac).toBeGreaterThan(0.005);
         expect(replacedFrac).toBeLessThan(0.25);
 
-        [a.rgba, a.doc, aClean.rgba, aClean.doc, b.rgba, b.doc, A, T, B0, al.aligned, fused, gA, gT, glare, clean].forEach((m) => m.delete());
+        [a.rgba, a.doc, aClean.rgba, aClean.doc, b.rgba, b.doc, A, T, al.aligned, fused, gA, gT, glare, clean].forEach((m) => m.delete());
       });
     }
   }

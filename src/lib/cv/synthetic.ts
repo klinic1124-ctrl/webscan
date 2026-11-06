@@ -96,6 +96,11 @@ export interface SceneOptions {
    * Default: a little right of and above the page centre.
    */
   glareAt?: { x: number; y: number };
+  /**
+   * Paper not lying flat: smooth wave of this many page pixels (840 px wide
+   * page), which no single homography can undo.
+   */
+  bend?: number;
   /** Table colour (RGB). Default: mid-brown wood. */
   table?: [number, number, number];
   seed?: number;
@@ -116,6 +121,23 @@ export function makeScene(cv: CV, o: SceneOptions): Scene {
   const docW = 840;
   const docH = Math.round(docW * (297 / 210));
   const doc = makeDocument(cv, o.kind, docW, docH, o.seed ?? 1);
+  if (o.bend) {
+    // Displace the page content smoothly (a wavy, not-quite-flat sheet).
+    const mx = new cv.Mat(docH, docW, cv.CV_32FC1);
+    const my = new cv.Mat(docH, docW, cv.CV_32FC1);
+    const ax: Float32Array = mx.data32F;
+    const ay: Float32Array = my.data32F;
+    for (let y = 0; y < docH; y++) {
+      for (let x = 0; x < docW; x++) {
+        ax[y * docW + x] = x + o.bend * Math.sin((2 * Math.PI * y) / docH);
+        ay[y * docW + x] = y + 0.6 * o.bend * Math.sin((Math.PI * x) / docW);
+      }
+    }
+    const bent = new cv.Mat();
+    cv.remap(doc, bent, mx, my, cv.INTER_LINEAR, cv.BORDER_REPLICATE);
+    bent.copyTo(doc);
+    [mx, my, bent].forEach((m) => m.delete());
+  }
   const f = 0.75 * Math.max(W, H);
   const quad = orderCorners(
     projectRectangle({

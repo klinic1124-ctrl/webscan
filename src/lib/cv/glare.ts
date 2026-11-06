@@ -5,6 +5,7 @@
 // clearly brighter in one shot than in another is a reflection in that
 // shot. The first (main) shot is kept everywhere except where it shows a
 // reflection; there the other shots fill in, with soft, feathered weights.
+import type { Quad } from '../geometry';
 import { copyMat, scoped, type CV, type Mat } from './loadCv';
 
 const odd = (n: number) => (Math.round(n) % 2 === 0 ? Math.round(n) + 1 : Math.round(n));
@@ -20,50 +21,48 @@ function smallSize(w: number, h: number, long: number) {
   return { w: Math.max(8, Math.round(w * f)), h: Math.max(8, Math.round(h * f)), f };
 }
 
-export interface AlignResult {
-  /** Moving image warped onto the reference (new Mat), or the input clone if alignment was not trusted. */
-  aligned: Mat;
-  ok: boolean;
-  inliers: number;
-}
+type M3 = number[]; // row-major 3×3
+
+const mul3 = (a: M3, b: M3): M3 => {
+  const r = new Array(9).fill(0);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++) r[i * 3 + j] += a[i * 3 + k] * b[k * 3 + j];
+  return r;
+};
+
+const inv3 = (m: M3): M3 => {
+  const [a, b, c, d, e, f, g, h, i] = m;
+  const A = e * i - f * h;
+  const B = -(d * i - f * g);
+  const C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  return [A, -(b * i - c * h), b * f - c * e, B, a * i - c * g, -(a * f - c * d), C, -(a * h - b * g), a * e - b * d].map((v) => v / det);
+};
+
+const scaleM = (f: number): M3 => [f, 0, 0, 0, f, 0, 0, 0, 1];
 
 /**
- * Fine alignment of an already page-flattened shot to the reference:
- * ORB features + RANSAC homography on ~800 px copies. Rejected when there are
- * too few consistent matches or the correction is implausibly large, in
- * which case the corner-based alignment is kept as is.
+ * ORB + RANSAC homography that maps points of `moving` onto `ref` (both
+ * small grey images of the same page). Null when matches are too few or
+ * the correction is implausibly large (corners moved > 4 % of the diagonal).
  */
-export function alignShot(cv: CV, refRgb: Mat, movingRgb: Mat): AlignResult {
+function matchHomography(cv: CV, ref: Mat, moving: Mat): M3 | null {
   return scoped((s) => {
-    const { w, h, f } = smallSize(refRgb.cols, refRgb.rows, 800);
-    const gray = (m: Mat) => {
-      const small = s.add(resizeTo(cv, m, w, h, cv.INTER_AREA));
-      const g = s.add(new cv.Mat());
-      cv.cvtColor(small, g, cv.COLOR_RGB2GRAY);
-      return g;
-    };
-    const g0 = gray(refRgb);
-    const g1 = gray(movingRgb);
     const orb = new cv.ORB(1500);
     const kp0 = s.add(new cv.KeyPointVector());
     const kp1 = s.add(new cv.KeyPointVector());
     const d0 = s.add(new cv.Mat());
     const d1 = s.add(new cv.Mat());
     const none = s.add(new cv.Mat());
-    orb.detectAndCompute(g0, none, kp0, d0);
-    orb.detectAndCompute(g1, none, kp1, d1);
+    orb.detectAndCompute(ref, none, kp0, d0);
+    orb.detectAndCompute(moving, none, kp1, d1);
     orb.delete();
-
-    const keep = (): AlignResult => ({ aligned: copyMat(cv, movingRgb), ok: false, inliers: 0 });
-    if (d0.rows < 12 || d1.rows < 12) return keep();
-
+    if (d0.rows < 12 || d1.rows < 12) return null;
     const bf = new cv.BFMatcher(cv.NORM_HAMMING, true);
     const matches = s.add(new cv.DMatchVector());
     bf.match(d1, d0, matches);
     bf.delete();
     const n = matches.size();
-    if (n < 12) return keep();
-
+    if (n < 12) return null;
     const src: number[] = [];
     const dst: number[] = [];
     for (let i = 0; i < n; i++) {
@@ -77,12 +76,12 @@ export function alignShot(cv: CV, refRgb: Mat, movingRgb: Mat): AlignResult {
     const dstM = s.add(cv.matFromArray(n, 1, cv.CV_32FC2, dst));
     const mask = s.add(new cv.Mat());
     const H = s.add(cv.findHomography(srcM, dstM, cv.RANSAC, 2.5, mask));
-    if (H.empty()) return keep();
+    if (H.empty()) return null;
     const inliers = cv.countNonZero(mask);
-    if (inliers < 12 || inliers < 0.25 * n) return keep();
-
-    // Plausibility: corners may move at most 4 % of the diagonal.
-    const hd: Float64Array = H.data64F;
+    if (inliers < 12 || inliers < 0.25 * n) return null;
+    const hd: number[] = Array.from(H.data64F as Float64Array);
+    const w = ref.cols;
+    const h = ref.rows;
     const diag = Math.hypot(w, h);
     for (const [x, y] of [
       [0, 0],
@@ -93,20 +92,172 @@ export function alignShot(cv: CV, refRgb: Mat, movingRgb: Mat): AlignResult {
       const z = hd[6] * x + hd[7] * y + hd[8];
       const nx = (hd[0] * x + hd[1] * y + hd[2]) / z;
       const ny = (hd[3] * x + hd[4] * y + hd[5]) / z;
-      if (!(Math.hypot(nx - x, ny - y) < 0.04 * diag)) return keep();
+      if (!(Math.hypot(nx - x, ny - y) < 0.04 * diag)) return null;
+    }
+    return hd;
+  });
+}
+
+export interface AlignExtraResult {
+  /** The extra shot on the main shot's page grid (RGB 8UC3, main's size) — caller deletes. */
+  aligned: Mat;
+  /** Feature-based alignment succeeded (else only the corners were used). */
+  ok: boolean;
+  /** Last refinement applied. */
+  method: 'corners' | 'homography' | 'flow';
+  ms: number;
+}
+
+const ALIGN_LONG = 800;
+
+/**
+ * Puts an extra photo onto the main shot's page grid, as sharply as possible:
+ * 1. page homography from its own corners,
+ * 2. corrected by an ORB + RANSAC homography against the main shot,
+ * 3. then a dense optical-flow correction for what a single homography
+ *    cannot express (paper not quite flat, lens distortion, corners a few
+ *    pixels off). Flow is ignored where either shot is blown out (the
+ *    reflection itself) and filled in from the surroundings.
+ * The source photo is resampled only once, straight into the page grid.
+ */
+export function alignExtra(cv: CV, mainRgb: Mat, extraRgba: Mat, quad: Quad, refine: 'homography' | 'flow' = 'flow'): AlignExtraResult {
+  const t0 = performance.now();
+  return scoped((s) => {
+    const W = mainRgb.cols;
+    const H = mainRgb.rows;
+    const { w, h, f } = smallSize(W, H, ALIGN_LONG);
+
+    // 1. Source photo → page (full resolution).
+    const from = s.add(cv.matFromArray(4, 1, cv.CV_32FC2, quad.flatMap((p) => [p.x, p.y])));
+    const to = s.add(cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, W - 1, 0, W - 1, H - 1, 0, H - 1]));
+    let Hp: M3 = Array.from(s.add(cv.getPerspectiveTransform(from, to)).data64F as Float64Array);
+
+    // Small working copies. The source is pre-shrunk so the small warp does not alias.
+    const ds = Math.min(1, (1.5 * Math.max(w, h)) / Math.max(extraRgba.cols, extraRgba.rows));
+    const srcSmall = s.add(resizeTo(cv, extraRgba, Math.max(1, Math.round(extraRgba.cols * ds)), Math.max(1, Math.round(extraRgba.rows * ds)), cv.INTER_AREA));
+    const mainSmall = s.add(resizeTo(cv, mainRgb, w, h, cv.INTER_AREA));
+    const g0 = s.add(new cv.Mat());
+    cv.cvtColor(mainSmall, g0, cv.COLOR_RGB2GRAY);
+    const smallOf = (Hfull: M3) => {
+      // small page ← full page ← source ← small source
+      const Hs = mul3(scaleM(f), mul3(Hfull, scaleM(1 / ds)));
+      const m = s.add(cv.matFromArray(3, 3, cv.CV_64F, Hs));
+      const out = s.add(new cv.Mat());
+      cv.warpPerspective(srcSmall, out, m, new cv.Size(w, h), cv.INTER_LINEAR, cv.BORDER_REPLICATE);
+      const g = s.add(new cv.Mat());
+      cv.cvtColor(out, g, cv.COLOR_RGBA2GRAY);
+      return g;
+    };
+
+    // 2. Feature homography (small page coords) → full page coords.
+    let ok = false;
+    let method: AlignExtraResult['method'] = 'corners';
+    const Hs = matchHomography(cv, g0, smallOf(Hp));
+    if (Hs) {
+      Hp = mul3(mul3(scaleM(1 / f), mul3(Hs, scaleM(f))), Hp);
+      ok = true;
+      method = 'homography';
     }
 
-    // Small-image homography → full resolution: S⁻¹ · H · S with S = diag(f, f, 1).
-    const Hf = s.add(
-      cv.matFromArray(3, 3, cv.CV_64F, [
-        hd[0], hd[1], hd[2] / f,
-        hd[3], hd[4], hd[5] / f,
-        hd[6] * f, hd[7] * f, hd[8],
-      ]),
-    );
-    const aligned = new cv.Mat();
-    cv.warpPerspective(movingRgb, aligned, Hf, new cv.Size(refRgb.cols, refRgb.rows), cv.INTER_LINEAR, cv.BORDER_REPLICATE);
-    return { aligned, ok: true, inliers };
+    // 3. Dense flow: main(x) ≈ extra(x + d(x)), in small page pixels.
+    let flow: Float32Array | null = null;
+    if (refine === 'flow') {
+      const g1 = smallOf(Hp);
+      const fl = s.add(new cv.Mat());
+      cv.calcOpticalFlowFarneback(g0, g1, fl, 0.5, 4, 21, 3, 5, 1.1, 0);
+      // Unreliable where either shot is blown out (reflections) — mask, then
+      // fill from neighbours by normalised convolution.
+      const bad = s.add(new cv.Mat());
+      const b1 = s.add(new cv.Mat());
+      // Only near-saturated pixels: white paper itself is often 230–245.
+      cv.threshold(g0, bad, 248, 255, cv.THRESH_BINARY);
+      cv.threshold(g1, b1, 248, 255, cv.THRESH_BINARY);
+      cv.bitwise_or(bad, b1, bad);
+      const kd = s.add(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(odd(w / 60), odd(w / 60))));
+      cv.dilate(bad, bad, kd);
+      const valid = s.add(new cv.Mat());
+      cv.bitwise_not(bad, valid);
+      const vf = s.add(new cv.Mat());
+      valid.convertTo(vf, cv.CV_32F, 1 / 255);
+      const ch = s.add(new cv.MatVector());
+      cv.split(fl, ch);
+      const sigma = Math.max(w, h) * 0.02;
+      const den = s.add(new cv.Mat());
+      cv.GaussianBlur(vf, den, new cv.Size(0, 0), sigma);
+      cv.max(den, s.add(new cv.Mat(h, w, cv.CV_32F, new cv.Scalar(1e-3))), den);
+      const comps: Float32Array[] = [];
+      for (let c = 0; c < 2; c++) {
+        const comp = s.add(ch.get(c));
+        cv.multiply(comp, vf, comp);
+        cv.GaussianBlur(comp, comp, new cv.Size(0, 0), sigma);
+        cv.divide(comp, den, comp);
+        comps.push(comp.data32F as Float32Array);
+      }
+      // Plausibility: a correction larger than 3 % of the page means the
+      // flow lost track; keep the homography result then.
+      const limit = 0.03 * Math.max(w, h);
+      let big = 0;
+      for (let i = 0; i < comps[0].length; i++) if (Math.hypot(comps[0][i], comps[1][i]) > limit) big++;
+      if (big < 0.02 * comps[0].length) {
+        flow = new Float32Array(w * h * 2);
+        for (let i = 0; i < w * h; i++) {
+          flow[2 * i] = comps[0][i];
+          flow[2 * i + 1] = comps[1][i];
+        }
+        method = 'flow';
+      }
+    }
+
+    // 4. One resampling from the original photo: page pixel X → source
+    //    Hp⁻¹ · (X + d(X)), built in strips to keep the maps small.
+    const Hi = inv3(Hp);
+    const aligned = new cv.Mat(H, W, cv.CV_8UC3);
+    const STRIP = 128;
+    const fs = f; // full → small page scale
+    for (let y0 = 0; y0 < H; y0 += STRIP) {
+      scoped((t) => {
+        const rows = Math.min(STRIP, H - y0);
+        const mx = t.add(new cv.Mat(rows, W, cv.CV_32FC1));
+        const my = t.add(new cv.Mat(rows, W, cv.CV_32FC1));
+        const ax: Float32Array = mx.data32F;
+        const ay: Float32Array = my.data32F;
+        for (let r = 0; r < rows; r++) {
+          const Y = y0 + r;
+          for (let X = 0; X < W; X++) {
+            let px = X;
+            let py = Y;
+            if (flow) {
+              // bilinear sample of the small flow field, scaled to full px
+              const sx = Math.min(w - 1.001, Math.max(0, X * fs));
+              const sy = Math.min(h - 1.001, Math.max(0, Y * fs));
+              const x0 = sx | 0;
+              const yy = sy | 0;
+              const ux = sx - x0;
+              const uy = sy - yy;
+              const i00 = 2 * (yy * w + x0);
+              const i10 = i00 + 2;
+              const i01 = i00 + 2 * w;
+              const i11 = i01 + 2;
+              const dx = (flow[i00] * (1 - ux) + flow[i10] * ux) * (1 - uy) + (flow[i01] * (1 - ux) + flow[i11] * ux) * uy;
+              const dy = (flow[i00 + 1] * (1 - ux) + flow[i10 + 1] * ux) * (1 - uy) + (flow[i01 + 1] * (1 - ux) + flow[i11 + 1] * ux) * uy;
+              px += dx / fs;
+              py += dy / fs;
+            }
+            const z = Hi[6] * px + Hi[7] * py + Hi[8];
+            const o = r * W + X;
+            ax[o] = (Hi[0] * px + Hi[1] * py + Hi[2]) / z;
+            ay[o] = (Hi[3] * px + Hi[4] * py + Hi[5]) / z;
+          }
+        }
+        const outRgba = t.add(new cv.Mat());
+        cv.remap(extraRgba, outRgba, mx, my, cv.INTER_CUBIC, cv.BORDER_REPLICATE);
+        const outRgb = t.add(new cv.Mat());
+        cv.cvtColor(outRgba, outRgb, cv.COLOR_RGBA2RGB);
+        const dst = t.add(aligned.roi(new cv.Rect(0, y0, W, rows)));
+        outRgb.copyTo(dst);
+      });
+    }
+    return { aligned, ok, method, ms: Math.round(performance.now() - t0) };
   });
 }
 
@@ -279,7 +430,9 @@ export function fuseShots(cv: CV, shots: Mat[]): FuseResult {
       cv.multiply(ex, gate, ex);
       cv.multiply(ex, selfGate[i], ex);
       cv.dilate(ex, ex, kernel); // cover the soft rim of the reflection too
-      cv.GaussianBlur(ex, ex, new cv.Size(0, 0), k / 2);
+      // Narrow feather: a wide blend would average two slightly misaligned
+      // photos over a broad band and look soft.
+      cv.GaussianBlur(ex, ex, new cv.Size(0, 0), k / 4);
       ex.convertTo(ex, cv.CV_32F, 1 / SOFT);
       cv.multiply(ex, ex, ex);
       cv.add(ex, one, ex);

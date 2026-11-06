@@ -17,7 +17,7 @@ import {
   type Point,
   type Quad,
 } from '../geometry';
-import { alignShot, fuseShots } from './glare';
+import { alignExtra, fuseShots } from './glare';
 import { scoped, type CV, type Mat, type MatScope } from './loadCv';
 
 export type Mode = 'auto' | 'color' | 'gray' | 'bw' | 'photo';
@@ -507,14 +507,9 @@ export function processPage(cv: CV, rgba: Mat, quad: Quad, opts: ProcessOptions,
       const shots: Mat[] = [rgb];
       const aligned: boolean[] = [];
       for (const ex of extras) {
-        const wr = warpQuad(cv, ex.rgba, ex.quad, size.width, size.height);
-        const er = new cv.Mat();
-        cv.cvtColor(wr, er, cv.COLOR_RGBA2RGB);
-        wr.delete();
-        const a = alignShot(cv, rgb, er);
-        er.delete();
+        const a = alignExtra(cv, rgb, ex.rgba, ex.quad);
         shots.push(s.add(a.aligned));
-        aligned.push(a.ok);
+        aligned.push(a.ok || a.method === 'flow');
       }
       const f = fuseShots(cv, shots);
       shots.slice(1).forEach((m) => m.delete());
