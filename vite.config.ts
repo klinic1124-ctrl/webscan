@@ -48,7 +48,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
-        // The OpenCV worker (WASM embedded) is ~11 MB and must work offline.
+        // The OpenCV worker (WASM embedded, ~6 MB slim / ~11 MB npm) must work offline.
         maximumFileSizeToCacheInBytes: 16 * 1024 * 1024,
       },
     }),

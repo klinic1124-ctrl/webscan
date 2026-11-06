@@ -250,3 +250,21 @@ Chrome의 가짜 카메라에 합성 영상을 넣었다(`test/make-y4m.test.ts`
 
 - 검출 주기와 배터리·발열. 너무 무거우면 간격을 늘린다.
 - 실제 종이와 책상에서 자동 촬영 타이밍이 자연스러운지.
+
+## 엔진 경량화 (2026-11-06)
+
+앱이 쓰는 OpenCV 함수만 넣어 OpenCV.js 4.12를 다시 빌드했다(`scripts/opencv/`, GitHub Actions "Slim OpenCV.js", Emscripten 3.1.74, WebAssembly SIMD).
+결과는 `vendor/opencv/opencv.js`이고, 있으면 앱과 테스트가 npm 빌드 대신 자동으로 쓴다.
+
+| 12MP 합성 사진 (Node, 같은 서버) | npm 빌드 | 경량 빌드 |
+|---|---|---|
+| 엔진 파일 | 10.9 MB | 5.6 MB |
+| 테두리 검출 | 271 ms | 126 ms |
+| 원근 펴기 | 약 255 ms | 약 272 ms |
+| 컬러 문서 마무리 | 343 ms | 103 ms |
+| 사진 모드 마무리 | 616 ms | 180 ms |
+| WASM 힙 | 1024 MB | 541 MB |
+
+- 자동 테스트 76개 통과, 브라우저 종단 테스트(보관함·PDF, 반사광 합성, 실시간 카메라) 통과.
+- SIMD 필요: iOS 16.4 이상 Safari, Chrome 91 이상. 더 오래된 iOS는 지원하지 않는다.
+- 새 OpenCV 함수를 쓰게 되면 `scripts/opencv/scanner.config.py`에 추가하고 워크플로를 다시 실행한다. 빌드는 `vendor/opencv/opencv.candidate.js`로 커밋되며, 테스트 후 `opencv.js`로 이름을 바꿔 켠다.
