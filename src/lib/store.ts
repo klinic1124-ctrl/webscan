@@ -37,6 +37,8 @@ export interface PageRecord {
   thumb: Blob;
   /** Extra photos of the same page used to remove reflections. */
   extras?: ExtraShotRecord[];
+  /** Reflection detection sensitivity chosen for this page (0..100). */
+  glareSensitivity?: number;
 }
 
 export interface ExtraShotRecord {

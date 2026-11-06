@@ -7,7 +7,7 @@ import type { DetectResult } from './lib/cv/pipeline';
 import type { SampleKind } from './lib/cv/synthetic';
 import { createStore, requestPersistence, type DetectState, type ExtraShotRecord, type PageRecord } from './lib/store';
 import { decodeFile, scanner, type SourceInfo } from './scanner';
-import { denormalizeQuad, fmtMs, normalizeQuad, type EngineInfo } from './ui';
+import { DEFAULT_GLARE_SENSITIVITY, denormalizeQuad, fmtMs, normalizeQuad, type EngineInfo } from './ui';
 
 const store = createStore();
 
@@ -47,6 +47,7 @@ async function newSession(docId: string, source: Blob, sourceName: string): Prom
     shots: [{ source, info, rotation: 0, quad: detect.quad }],
     mode: 'auto',
     aspect: 'auto',
+    glareSensitivity: DEFAULT_GLARE_SENSITIVITY,
     detect,
     detectState: detectStateOf(detect),
     loadTimings: { ...timings, detect: Math.round(performance.now() - t) },
@@ -135,6 +136,7 @@ export function App() {
           shots: [{ source, info, rotation: 0, quad: detect.quad }],
           mode: 'auto',
           aspect: 'auto',
+          glareSensitivity: DEFAULT_GLARE_SENSITIVITY,
           detect,
           detectState: detectStateOf(detect),
           loadTimings: { ...info.timings, detect: Math.round(performance.now() - t) },
@@ -156,6 +158,7 @@ export function App() {
           shots,
           mode: page.mode,
           aspect: page.aspect,
+          glareSensitivity: page.glareSensitivity ?? DEFAULT_GLARE_SENSITIVITY,
           detect: null,
           detectState: page.detect,
           loadTimings: timings,
@@ -163,7 +166,7 @@ export function App() {
       });
     });
 
-  const savePage = async ({ session, shots, mode, aspect, detectState, result }: SavedPage) => {
+  const savePage = async ({ session, shots, mode, aspect, glareSensitivity, detectState, result }: SavedPage) => {
     const [main, ...extras] = shots;
     await store.savePage(
       {
@@ -181,6 +184,7 @@ export function App() {
         height: result.height,
         thumb: result.thumb,
         extras: extras.map((e) => ({ source: e.source, rotation: e.rotation, quad: normalizeQuad(e.quad, e.info.width, e.info.height) })),
+        glareSensitivity,
       },
       session.insertAt,
     );

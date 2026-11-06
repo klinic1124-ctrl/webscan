@@ -4,7 +4,16 @@
 // main photo, shots[1..] are extra photos used to remove reflections.
 import * as Comlink from 'comlink';
 import { loadCv, type CV, type Mat } from '../lib/cv/loadCv';
-import { detectQuad, processPage, resizeLong, rotateCW, type DetectResult, type ProcessOptions, type ProcessResult } from '../lib/cv/pipeline';
+import {
+  detectQuad,
+  processPage,
+  resizeLong,
+  rotateCW,
+  type AlignCache,
+  type DetectResult,
+  type ProcessOptions,
+  type ProcessResult,
+} from '../lib/cv/pipeline';
 import { makeScene, type SampleKind } from '../lib/cv/synthetic';
 import type { Quad } from '../lib/geometry';
 
@@ -15,9 +24,21 @@ export const MAX_SOURCE_LONG_SIDE = 4096;
 export const MAX_EXTRA_LONG_SIDE = 3072;
 export const MAX_EXTRA_SHOTS = 2;
 const PREVIEW_LONG_SIDE = 1600;
+/** Page size for quick multi-photo previews (sensitivity slider etc.). */
+const PREVIEW_PAGE_LONG_SIDE = 2000;
 
 let cv: CV | null = null;
 const shots: Mat[] = [];
+/** Version per slot, so cached alignments are never reused for a replaced or rotated photo. */
+const shotVersion: number[] = [];
+let versionCounter = 0;
+const alignCache: AlignCache = new Map();
+const ALIGN_CACHE_MAX = 4;
+
+function clearAlignCache() {
+  for (const v of alignCache.values()) v.aligned.delete();
+  alignCache.clear();
+}
 
 const now = () => performance.now();
 const round = (ms: number) => Math.round(ms * 10) / 10;
@@ -39,6 +60,18 @@ async function encode(mat: Mat, type: string, quality?: number): Promise<Blob> {
   ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba.data), rgba.cols, rgba.rows), 0, 0);
   if (rgba !== mat) rgba.delete();
   return canvas.convertToBlob({ type, quality });
+}
+
+/** Orange, semi-transparent where extra photos filled in (alpha follows the share). */
+async function maskOverlay(mask: Mat): Promise<Blob> {
+  const c = await ensureCv();
+  const rgba = new c.Mat(mask.rows, mask.cols, c.CV_8UC4, new c.Scalar(255, 122, 69, 0));
+  const d: Uint8Array = rgba.data;
+  const m: Uint8Array = mask.data;
+  for (let i = 0; i < m.length; i++) d[i * 4 + 3] = Math.round(m[i] * 0.6);
+  const blob = await encode(rgba, 'image/png');
+  rgba.delete();
+  return blob;
 }
 
 export interface SourceInfo {
@@ -63,12 +96,15 @@ async function setShot(index: number, mat: Mat, timings: Record<string, number>)
     mat = r;
     timings.downscale = round(now() - t);
   }
+  clearAlignCache();
   if (index === 0) {
     for (const m of shots.splice(0)) m.delete();
+    shotVersion.length = 0;
   } else {
     shots[index]?.delete();
   }
   shots[index] = mat;
+  shotVersion[index] = ++versionCounter;
   t = now();
   const small = resizeLong(c, mat, PREVIEW_LONG_SIDE);
   const preview = await encode(small, 'image/jpeg', 0.85);
@@ -109,7 +145,11 @@ export interface ScanResult {
   aspect: Awaited<ReturnType<typeof processPage>>['aspect'];
   saturatedFrac: number;
   classify: Awaited<ReturnType<typeof processPage>>['classify'];
-  fusion?: ProcessResult['fusion'];
+  fusion?: Omit<NonNullable<ProcessResult['fusion']>, 'mask'>;
+  /** Transparent PNG marking where extra photos were used (same aspect as the page). */
+  overlay?: Blob;
+  /** Computed at reduced size for a quick look; save with a full scan. */
+  preview: boolean;
   timings: Record<string, number>;
 }
 
@@ -149,6 +189,8 @@ const api = {
   async removeShot(index: number): Promise<void> {
     if (index < 1 || index >= shots.length) return;
     shots.splice(index, 1)[0].delete();
+    shotVersion.splice(index, 1);
+    clearAlignCache();
   },
 
   shotCount(): number {
@@ -186,11 +228,31 @@ const api = {
    * Processes the page. `extraQuads[i]` is the page outline in extra shot
    * i + 1; extra shots without a quad are ignored.
    */
-  async scan(quad: Quad, opts: ProcessOptions, extraQuads: Quad[] = [], format: 'image/jpeg' | 'image/png' = 'image/jpeg'): Promise<ScanResult> {
+  async scan(
+    quad: Quad,
+    opts: ProcessOptions,
+    extraQuads: Quad[] = [],
+    format: 'image/jpeg' | 'image/png' = 'image/jpeg',
+    preview = false,
+  ): Promise<ScanResult> {
     const c = await ensureCv();
     const t0 = now();
-    const extras = extraQuads.slice(0, shots.length - 1).map((q, i) => ({ rgba: shot(i + 1), quad: q }));
-    const r = processPage(c, shot(0), quad, opts, extras);
+    const extras = extraQuads.slice(0, shots.length - 1).map((q, i) => ({ rgba: shot(i + 1), quad: q, id: `v${shotVersion[i + 1]}` }));
+    // Fusing several photos is slow on phones: quick looks use a smaller page.
+    const quick = preview && extras.length > 0;
+    const o: ProcessOptions = { ...opts, withGlareMask: extras.length > 0, maxLong: quick ? Math.min(opts.maxLong ?? 4000, PREVIEW_PAGE_LONG_SIDE) : opts.maxLong };
+    const r = processPage(c, shot(0), quad, o, extras, alignCache);
+    while (alignCache.size > ALIGN_CACHE_MAX) {
+      const [k, v] = alignCache.entries().next().value!;
+      v.aligned.delete();
+      alignCache.delete(k);
+    }
+    let overlay: Blob | undefined;
+    if (r.fusion?.mask) {
+      overlay = await maskOverlay(r.fusion.mask);
+      r.fusion.mask.delete();
+      delete r.fusion.mask;
+    }
     const t = now();
     // Black & white compresses far better (and stays crisp) as PNG.
     const type = r.mode === 'bw' ? 'image/png' : format;
@@ -210,6 +272,8 @@ const api = {
       saturatedFrac: r.saturatedFrac,
       classify: r.classify,
       fusion: r.fusion,
+      overlay,
+      preview: quick,
       timings,
     };
   },

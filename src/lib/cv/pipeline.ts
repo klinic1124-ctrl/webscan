@@ -448,6 +448,10 @@ export interface ProcessOptions {
   aspect: AspectChoice;
   /** Cap for the long side of the output page (px). */
   maxLong?: number;
+  /** Reflection detection sensitivity 0..100 (default 50); see glareParams. */
+  glareSensitivity?: number;
+  /** Return a map of where extra shots were used (fusion.mask). */
+  withGlareMask?: boolean;
 }
 
 export interface ProcessResult {
@@ -467,6 +471,8 @@ export interface ProcessResult {
     aligned: boolean[];
     /** Share of the page taken from the extra shots. */
     replacedFrac: number;
+    /** 8UC1 share taken from extra shots, page aspect, low-res — caller deletes. */
+    mask?: Mat;
   };
   timings: Record<string, number>;
 }
@@ -475,7 +481,16 @@ export interface ProcessResult {
 export interface ExtraShot {
   rgba: Mat;
   quad: Quad;
+  /** Identifies this photo version for `AlignCache` (omit to never cache). */
+  id?: string;
 }
+
+/**
+ * Aligned extra shots from earlier calls, keyed by photo, corners and page
+ * size. Aligning is the slow part of fusion; when only the mode or the
+ * reflection sensitivity changes, it can be reused. The cache owns its Mats.
+ */
+export type AlignCache = Map<string, { aligned: Mat; ok: boolean }>;
 
 export interface Classification {
   /** How much the estimated paper background varies beyond smooth lighting. */
@@ -485,7 +500,7 @@ export interface Classification {
   suggested: ResolvedMode;
 }
 
-export function processPage(cv: CV, rgba: Mat, quad: Quad, opts: ProcessOptions, extras: ExtraShot[] = []): ProcessResult {
+export function processPage(cv: CV, rgba: Mat, quad: Quad, opts: ProcessOptions, extras: ExtraShot[] = [], alignCache?: AlignCache): ProcessResult {
   const timings: Record<string, number> = {};
   const lap = (name: string, t: number) => (timings[name] = Math.round((now() - t) * 10) / 10);
 
@@ -506,16 +521,27 @@ export function processPage(cv: CV, rgba: Mat, quad: Quad, opts: ProcessOptions,
       t = now();
       const shots: Mat[] = [rgb];
       const aligned: boolean[] = [];
+      const owned: Mat[] = [];
       for (const ex of extras) {
+        const key = ex.id && alignCache ? `${ex.id}|${ex.quad.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(';')}|${size.width}x${size.height}` : null;
+        const hit = key ? alignCache!.get(key) : undefined;
+        if (hit) {
+          shots.push(hit.aligned);
+          aligned.push(hit.ok);
+          continue;
+        }
         const a = alignExtra(cv, rgb, ex.rgba, ex.quad);
-        shots.push(s.add(a.aligned));
-        aligned.push(a.ok || a.method === 'flow');
+        const ok = a.ok || a.method === 'flow';
+        shots.push(a.aligned);
+        aligned.push(ok);
+        if (key) alignCache!.set(key, { aligned: a.aligned, ok });
+        else owned.push(a.aligned);
       }
-      const f = fuseShots(cv, shots);
-      shots.slice(1).forEach((m) => m.delete());
+      const f = fuseShots(cv, shots, { sensitivity: opts.glareSensitivity, withMask: opts.withGlareMask });
+      owned.forEach((m) => m.delete());
       rgb.delete();
       rgb = s.add(f.fused);
-      fusion = { shots: shots.length, aligned, replacedFrac: f.replacedFrac };
+      fusion = { shots: shots.length, aligned, replacedFrac: f.replacedFrac, mask: f.mask };
       lap('fuse', t);
     }
 

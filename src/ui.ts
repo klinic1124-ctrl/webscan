@@ -26,6 +26,9 @@ export const ASPECTS: { id: AspectChoice; label: string }[] = [
   { id: 'edges', label: '변 길이' },
 ];
 
+/** Reflection detection sensitivity used unless the user moves the slider. */
+export const DEFAULT_GLARE_SENSITIVITY = 50;
+
 export interface EngineInfo {
   ms: number;
   version: string;

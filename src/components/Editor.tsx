@@ -4,7 +4,7 @@ import type { DetectResult, Mode } from '../lib/cv/pipeline';
 import { fullFrameQuad, isConvex, nearestPaper, PAPER, rotateQuadCW, type AspectChoice, type Quad } from '../lib/geometry';
 import type { DetectState } from '../lib/store';
 import { decodeFile, scanner, type ScanResult, type SourceInfo } from '../scanner';
-import { ASPECTS, MODE_NAME, MODES, useObjectUrl, type EngineInfo } from '../ui';
+import { ASPECTS, DEFAULT_GLARE_SENSITIVITY, MODE_NAME, MODES, useObjectUrl, type EngineInfo } from '../ui';
 import { CropEditor } from './CropEditor';
 import { Metrics } from './Metrics';
 
@@ -27,6 +27,8 @@ export interface EditSession {
   shots: Shot[];
   mode: Mode;
   aspect: AspectChoice;
+  /** Reflection detection sensitivity 0..100 (50 = default). */
+  glareSensitivity: number;
   detect: DetectResult | null;
   detectState: DetectState;
   loadTimings: Record<string, number>;
@@ -37,6 +39,7 @@ export interface SavedPage {
   shots: Shot[];
   mode: Mode;
   aspect: AspectChoice;
+  glareSensitivity: number;
   detectState: DetectState;
   result: ScanResult;
 }
@@ -59,10 +62,14 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
   const [detectState, setDetectState] = useState<DetectState>(session.detectState);
   const [mode, setMode] = useState<Mode>(session.mode);
   const [aspect, setAspect] = useState<AspectChoice>(session.aspect);
+  const [sens, setSens] = useState(session.glareSensitivity);
+  const [showOverlay, setShowOverlay] = useState(true);
   const [result, setResult] = useState<ScanResult | null>(null);
+  const sensTimer = useRef<number | undefined>(undefined);
   const current = shots[Math.min(sel, shots.length - 1)];
   const previewUrl = useObjectUrl(current.info.preview);
   const resultUrl = useObjectUrl(result?.blob);
+  const overlayUrl = useObjectUrl(result?.overlay);
   const resultRef = useRef<HTMLDivElement>(null);
   const isNew = !session.pageId;
   const isSample = session.sourceName.startsWith('sample-');
@@ -76,16 +83,18 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
     if (sel === 0) setDetectState('manual');
   };
 
-  const scanNow = (list: Shot[], m: Mode, a: AspectChoice) =>
+  const scanNow = (list: Shot[], m: Mode, a: AspectChoice, g: number, quick: boolean) =>
     scanner().scan(
       list[0].quad,
-      { mode: m, aspect: a },
+      { mode: m, aspect: a, glareSensitivity: g },
       list.slice(1).map((s) => s.quad),
+      'image/jpeg',
+      quick,
     );
 
-  const preview = (m: Mode, a: AspectChoice, scroll: boolean) =>
+  const preview = (m: Mode, a: AspectChoice, scroll: boolean, g = sens) =>
     run(shots.length > 1 ? '사진을 합성하는 중' : '스캔하는 중', async () => {
-      const r = await scanNow(shots, m, a);
+      const r = await scanNow(shots, m, a, g, true);
       setResult(r);
       if (scroll) requestAnimationFrame(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
       return r;
@@ -143,10 +152,19 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
       setResult(null);
     });
 
+  // Sensitivity slider: re-preview shortly after the user stops moving it.
+  const changeSens = (v: number) => {
+    setSens(v);
+    window.clearTimeout(sensTimer.current);
+    sensTimer.current = window.setTimeout(() => void preview(mode, aspect, false, v), 450);
+  };
+  useEffect(() => () => window.clearTimeout(sensTimer.current), []);
+
   const onSaveClick = () =>
     void run(shots.length > 1 ? '합성해서 저장하는 중' : '페이지 저장 중', async () => {
-      const r = result ?? (await scanNow(shots, mode, aspect));
-      await onSave({ session, shots, mode, aspect, detectState, result: r });
+      // Quick previews are reduced in size: save from a full-resolution scan.
+      const r = result && !result.preview ? result : await scanNow(shots, mode, aspect, sens, false);
+      await onSave({ session, shots, mode, aspect, glareSensitivity: sens, detectState, result: r });
     });
 
   // Keyboard: Escape cancels.
@@ -268,6 +286,39 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
           <details className="opt glare-box" open={shots.length > 1 || undefined}>
             <summary className="label">반사광 지우기{shots.length > 1 ? ` · 사진 ${shots.length}장` : ''}</summary>
             <p className="hint">광택 사진이나 코팅된 종이에 반사광이 있으면, 조명이나 휴대폰 각도를 바꿔 같은 페이지를 한두 장 더 찍으세요. 반사된 부분만 다른 사진으로 채웁니다.</p>
+            {shots.length > 1 && (
+              <div className="sens">
+                <label htmlFor="glare-sens" className="sens-head">
+                  <span>반사 판정 민감도</span>
+                  <span className="mono">{sens === DEFAULT_GLARE_SENSITIVITY ? '기본' : sens}</span>
+                </label>
+                <input
+                  id="glare-sens"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={sens}
+                  onChange={(e) => changeSens(Number(e.target.value))}
+                  aria-describedby="glare-sens-hint"
+                />
+                <div className="sens-scale" aria-hidden="true">
+                  <span>뚜렷한 반사만</span>
+                  <span>은은한 번들거림까지</span>
+                </div>
+                <p id="glare-sens-hint" className="hint">
+                  반사가 덜 지워졌으면 오른쪽으로, 반사가 아닌 부분까지 바뀌면 왼쪽으로 옮기세요. 결과의 주황색이 다른 사진에서 가져온 부분입니다.
+                  {sens !== DEFAULT_GLARE_SENSITIVITY && (
+                    <>
+                      {' '}
+                      <button className="link" onClick={() => changeSens(DEFAULT_GLARE_SENSITIVITY)} disabled={busy}>
+                        기본값으로
+                      </button>
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
             {canAdd ? addButtons(false) : <p className="hint">사진은 페이지당 {MAX_SHOTS}장까지 쓸 수 있습니다.</p>}
           </details>
         </div>
@@ -312,9 +363,19 @@ export function Editor({ session, engine, busy, run, onCancel, onSave }: Props) 
               {canAdd && addButtons(true)}
             </div>
           )}
+          {result.fusion && overlayUrl && (
+            <label className="check">
+              <input id="show-overlay" type="checkbox" checked={showOverlay} onChange={(e) => setShowOverlay(e.target.checked)} />
+              다른 사진에서 가져온 부분 표시 (주황색)
+            </label>
+          )}
           <div className="result">
-            <img src={resultUrl} alt="스캔 미리보기" />
+            <div className="result-stack">
+              <img src={resultUrl} alt="스캔 미리보기" />
+              {result.fusion && overlayUrl && showOverlay && <img className="overlay" src={overlayUrl} alt="" />}
+            </div>
           </div>
+          {result.preview && <p className="hint">빠른 미리보기입니다. 저장할 때 원래 해상도로 다시 처리합니다.</p>}
           <button className="btn primary wide" onClick={onSaveClick} disabled={busy}>
             {isNew ? '페이지 추가' : '변경 저장'}
           </button>
