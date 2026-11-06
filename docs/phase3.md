@@ -29,8 +29,17 @@
 - 파일 앱 / 미리보기에서 PDF 검색과 글자 선택·복사가 되는지.
 - 실제 사진(조명 얼룩, 작은 글씨, 표)에서 인식률.
 
-## iPhone에서 글자 선택이 안 됨 (진행 중)
+## iPhone에서 글자 선택이 안 되던 문제 (해결)
 
-- 1차: 글꼴의 CIDSystemInfo 문자열을 UTF-16으로 쓰고 있었음 → 일반 문자열로 수정. 그래도 iPhone에서 선택 안 됨(단어 63개는 들어 있음).
-- 2차: 글꼴(Tesseract pdf.ttf), ToUnicode, 글자 배치(Tm/Td/TJ)를 Tesseract 출력과 같게 맞춤.
-- 어느 차이가 원인인지 가리기 위해 `public/ocr-test/`에 같은 페이지를 다섯 방식으로 만든 PDF를 둠(A: Tesseract 원본 … E: 지금 앱). 확인이 끝나면 지운다.
+- 1차: 글꼴의 CIDSystemInfo 문자열을 UTF-16으로 쓰고 있었음 → 일반 문자열로 수정. 그래도 iPhone에서 선택 안 됨(글자 데이터는 들어 있었음).
+- 같은 페이지를 다섯 방식으로 만들어 iPhone에서 비교:
+
+  | PDF | 내용 | iPhone 선택 |
+  |---|---|---|
+  | A | Tesseract가 직접 만든 PDF | 됨 |
+  | B | 기존 앱 방식 (fontTools로 만든 글꼴) | 안 됨 |
+  | C | B + Tesseract 글꼴(pdf.ttf) | 됨 |
+  | D | C + Tesseract ToUnicode | 됨 |
+  | E | D + Tesseract 글자 배치 (현재 앱) | 됨 |
+
+- 원인은 글꼴 파일 자체였다. poppler와 pdfium은 받아 주지만 iOS PDFKit은 받지 않았다. 현재 앱은 E 방식을 쓴다.
