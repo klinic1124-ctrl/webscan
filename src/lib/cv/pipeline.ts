@@ -704,9 +704,9 @@ export function finishDocument(cv: CV, s: MatScope, flat: Mat, mode: 'color' | '
 }
 
 /**
- * Sauvola adaptive threshold (OpenCV.js lacks ximgproc), followed by removal
- * of isolated specks. The window is small enough to keep staff lines and
- * stems in sheet music intact.
+ * Sauvola adaptive threshold (OpenCV.js lacks ximgproc), then faint thin
+ * lines restored (sheet music: staff lines and stems that would come out
+ * dotted) and isolated specks removed.
  */
 export function binarize(cv: CV, s: MatScope, gray: Mat, k = 0.2, R = 128): Mat {
   const long = Math.max(gray.cols, gray.rows);
@@ -726,9 +726,10 @@ export function binarize(cv: CV, s: MatScope, gray: Mat, k = 0.2, R = 128): Mat 
   cv.sqrt(b, a); // std
   cv.multiply(m, a, b, k / R);
   cv.addWeighted(m, 1 - k, b, 1, 0, a); // T = m(1-k) + k·m·sd/R
-  b.delete();
   const out = new cv.Mat();
   cv.compare(f, a, out, cv.CMP_GT);
+  addFaintLines(cv, out, gray, long);
+  b.delete();
   // Sauvola sees no contrast inside large solid areas and would hollow them
   // out; on a flattened page anything below mid-grey is ink regardless.
   const bright = s.add(new cv.Mat());
@@ -738,7 +739,131 @@ export function binarize(cv: CV, s: MatScope, gray: Mat, k = 0.2, R = 128): Mat 
   m.delete();
   a.delete();
   despeckle(cv, out, Math.max(2, Math.round(3 * (long / 2000) ** 2)));
+  clearRim(cv, out, Math.max(3, Math.round(long * 0.012)));
   return out;
+}
+
+/**
+ * Finds thin straight lines (staff lines, stems, rules) in the grey page,
+ * even where they are too faint for the local threshold and come out dotted.
+ * Averaging along the line direction cancels noise but not the line; the
+ * line is then where that average is darker than just above and below it.
+ * Only the line's core is marked, and only long runs,
+ * so strokes do not get bolder and text is left alone.
+ * \`bin\`: 0 = ink (ink added in place); \`f\`: the grey page (float).
+ */
+/** Darkness of a faint line, across it, after averaging along it (grey levels). */
+const LINE_CONTRAST = 8;
+/** Share of a found line that the threshold must already have marked as ink. */
+const MIN_SEEN = 0.25;
+
+function addFaintLines(cv: CV, bin: Mat, gray: Mat, long: number) {
+  scoped((s) => {
+    const along = odd(Math.max(9, long / 180)); // averaging length
+    const across = odd(Math.max(5, long / 220)); // lines thinner than this
+    const seg = odd(Math.max(15, long / 90)); // shortest run kept
+    const anchor = new cv.Point(-1, -1);
+    const add: number[] = []; // pixels to mark as ink, applied at the end
+    // (8-bit throughout: several times faster than float here.)
+    // A marked pixel must itself be darker than the paper around it, so
+    // lines do not run on past their ends (the averaging smears them).
+    const paper = s.add(new cv.Mat());
+    cv.dilate(gray, paper, cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(2 * across + 1, 2 * across + 1)));
+    const dark = s.add(new cv.Mat());
+    cv.subtract(paper, gray, dark);
+    const ink = s.add(new cv.Mat());
+    cv.bitwise_not(bin, ink);
+    const evidence = s.add(new cv.Mat());
+    const blob = odd(Math.max(3, across * 0.6));
+    cv.morphologyEx(ink, evidence, cv.MORPH_OPEN, cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(blob, blob)), anchor, 1, cv.BORDER_CONSTANT, new cv.Scalar(0));
+    cv.subtract(ink, evidence, evidence);
+    cv.threshold(dark, dark, LINE_CONTRAST, 255, cv.THRESH_BINARY);
+    for (const horiz of [true, false]) {
+      const sz = (a: number, b: number) => (horiz ? new cv.Size(a, b) : new cv.Size(b, a));
+      const avg = s.add(new cv.Mat());
+      cv.boxFilter(gray, avg, -1, sz(along, 1), anchor, true, cv.BORDER_REPLICATE);
+      const resp = s.add(new cv.Mat());
+      cv.morphologyEx(avg, resp, cv.MORPH_BLACKHAT, cv.getStructuringElement(cv.MORPH_RECT, sz(1, across)));
+      // Core of the line: within 80 % of the strongest response nearby
+      // (narrow, so restored lines are not bolder than the printed ones)…
+      const half = s.add(new cv.Mat());
+      cv.dilate(resp, half, cv.getStructuringElement(cv.MORPH_RECT, sz(1, 5)));
+      half.convertTo(half, cv.CV_8U, 0.8);
+      const core = s.add(new cv.Mat());
+      cv.compare(resp, half, core, cv.CMP_GE);
+      // …with real contrast…
+      cv.threshold(resp, resp, LINE_CONTRAST, 255, cv.THRESH_BINARY);
+      cv.bitwise_and(core, resp, core);
+      // …darker than the paper right there…
+      cv.bitwise_and(core, dark, core);
+      // …in long runs only.
+      cv.morphologyEx(core, core, cv.MORPH_OPEN, cv.getStructuringElement(cv.MORPH_RECT, sz(seg, 1)), anchor, 1, cv.BORDER_CONSTANT, new cv.Scalar(0));
+      // Keep a found line only where the threshold already saw a good part
+      // of it: a real faint line comes out dotted, but lines that never
+      // made it (music on the back of the sheet showing through) stay out.
+      // Each direction on its own, so crossing lines do not vouch for each
+      // other.
+      // Evidence is thin ink only: a back-page line touching a notehead or
+      // another solid mark does not count as seen there.
+      const labels = s.add(new cv.Mat());
+      const stats = s.add(new cv.Mat());
+      const cents = s.add(new cv.Mat());
+      const n = cv.connectedComponentsWithStats(core, labels, stats, cents, 8, cv.CV_32S);
+      if (n < 2) continue;
+      // Views into WASM memory go stale when it grows: take them only now,
+      // after the last allocation. Lines are thin, so walking each one's
+      // bounding box is far cheaper than walking the page.
+      const ev: Uint8Array = evidence.data;
+      const lab: Int32Array = labels.data32S;
+      const st: Int32Array = stats.data32S;
+      const W = bin.cols;
+      for (let c = 1; c < n; c++) {
+        const x0 = st[c * 5 + cv.CC_STAT_LEFT];
+        const y0 = st[c * 5 + cv.CC_STAT_TOP];
+        const x1 = x0 + st[c * 5 + cv.CC_STAT_WIDTH];
+        const y1 = y0 + st[c * 5 + cv.CC_STAT_HEIGHT];
+        let seen = 0;
+        for (let y = y0; y < y1; y++) for (let i = y * W + x0, e = y * W + x1; i < e; i++) if (lab[i] === c && ev[i]) seen++;
+        if (seen < MIN_SEEN * st[c * 5 + cv.CC_STAT_AREA]) continue;
+        for (let y = y0; y < y1; y++) for (let i = y * W + x0, e = y * W + x1; i < e; i++) if (lab[i] === c) add.push(i);
+      }
+    }
+    const d: Uint8Array = bin.data;
+    for (const i of add) d[i] = 0;
+  });
+}
+
+/**
+ * Removes ink that lies entirely in the outer \`rim\` pixels and touches the
+ * edge: the sliver of table or page edge left by a slightly generous crop,
+ * which would otherwise print as a black line or dashes along the border.
+ */
+function clearRim(cv: CV, bin: Mat, rim: number) {
+  scoped((s) => {
+    const inv = s.add(new cv.Mat());
+    cv.bitwise_not(bin, inv);
+    const labels = s.add(new cv.Mat());
+    const stats = s.add(new cv.Mat());
+    const cents = s.add(new cv.Mat());
+    const n = cv.connectedComponentsWithStats(inv, labels, stats, cents, 8, cv.CV_32S);
+    const W = bin.cols;
+    const H = bin.rows;
+    const st: Int32Array = stats.data32S;
+    const lab: Int32Array = labels.data32S;
+    const d: Uint8Array = bin.data;
+    for (let c = 1; c < n; c++) {
+      const x0 = st[c * 5 + cv.CC_STAT_LEFT];
+      const y0 = st[c * 5 + cv.CC_STAT_TOP];
+      const x1 = x0 + st[c * 5 + cv.CC_STAT_WIDTH];
+      const y1 = y0 + st[c * 5 + cv.CC_STAT_HEIGHT];
+      const inLeft = x0 === 0 && x1 <= rim;
+      const inRight = x1 === W && x0 >= W - rim;
+      const inTop = y0 === 0 && y1 <= rim;
+      const inBottom = y1 === H && y0 >= H - rim;
+      if (!(inLeft || inRight || inTop || inBottom)) continue;
+      for (let y = y0; y < y1; y++) for (let i = y * W + x0, e = y * W + x1; i < e; i++) if (lab[i] === c) d[i] = 255;
+    }
+  });
 }
 
 /** Turns ink components smaller than minArea white (in place). */

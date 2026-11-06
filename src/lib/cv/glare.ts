@@ -208,14 +208,17 @@ export function alignExtra(cv: CV, mainRgb: Mat, extraRgba: Mat, quad: Quad, ref
       const den = s.add(new cv.Mat());
       cv.GaussianBlur(vf, den, new cv.Size(0, 0), sigma);
       cv.max(den, s.add(new cv.Mat(h, w, cv.CV_32F, new cv.Scalar(1e-3))), den);
-      const comps: Float32Array[] = [];
+      const compMats: Mat[] = [];
       for (let c = 0; c < 2; c++) {
         const comp = s.add(ch.get(c));
         cv.multiply(comp, vf, comp);
         cv.GaussianBlur(comp, comp, new cv.Size(0, 0), sigma);
         cv.divide(comp, den, comp);
-        comps.push(comp.data32F as Float32Array);
+        compMats.push(comp);
       }
+      // Views into WASM memory go stale when it grows: take them after the
+      // last allocation.
+      const comps: Float32Array[] = compMats.map((m) => m.data32F as Float32Array);
       // Far from any edge the smoothed field fades to 0 (= homography only).
       const dd: Float32Array = den.data32F;
       const fade = (v: number) => Math.min(1, v / 0.02);
@@ -401,7 +404,10 @@ export function fuseShots(cv: CV, shots: Mat[], opts: { sensitivity?: number; wi
       for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) out[y * lw + x] = quadAt(coef, x, y, lw, lh);
       return out;
     });
-    const L: Uint8Array[] = lowLum.map((m) => m.data as Uint8Array);
+    // (Views into WASM memory are taken right before use throughout: any
+    // allocation may grow the memory and leave older views empty.)
+    const lowViews = (): Uint8Array[] => lowLum.map((m) => m.data as Uint8Array);
+    let L = lowViews();
     const n = lw * lh;
     const cand: Uint8Array[] = shots.map(() => new Uint8Array(n));
     for (let k = 0; k < n; k++) {
@@ -421,8 +427,9 @@ export function fuseShots(cv: CV, shots: Mat[], opts: { sensitivity?: number; wi
       if (i === 0) return s.add(new cv.Mat(h, w, cv.CV_32F, new cv.Scalar(1)));
       const r = s.add(new cv.Mat(lh, lw, cv.CV_32F));
       const vw = s.add(new cv.Mat(lh, lw, cv.CV_32F));
-      const rd: Float32Array = r.data32F;
-      const wd: Float32Array = vw.data32F;
+      L = lowViews();
+      let rd: Float32Array = r.data32F;
+      let wd: Float32Array = vw.data32F;
       for (let k = 0; k < n; k++) {
         const a = L[0][k];
         const b = L[i][k];
@@ -432,6 +439,8 @@ export function fuseShots(cv: CV, shots: Mat[], opts: { sensitivity?: number; wi
       }
       cv.GaussianBlur(r, r, new cv.Size(0, 0), sigmaL);
       cv.GaussianBlur(vw, vw, new cv.Size(0, 0), sigmaL);
+      rd = r.data32F;
+      wd = vw.data32F;
       const q = quadLog[i];
       for (let k = 0; k < n; k++) {
         // blend towards the smooth model where little was usable nearby

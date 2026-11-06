@@ -7,6 +7,7 @@
 - 1단계(MVP) 기록: [`docs/phase1.md`](docs/phase1.md)
 - 2단계 기록(반사광 지우기, 실시간 카메라, 엔진 경량화): [`docs/phase2.md`](docs/phase2.md)
 - 3단계 기록(글자 검색 PDF): [`docs/phase3.md`](docs/phase3.md)
+- 4단계 기록(악보 흑백 품질): [`docs/phase4.md`](docs/phase4.md)
 
 ## 기능
 
