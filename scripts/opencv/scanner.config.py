@@ -10,6 +10,8 @@ core = {
         'max', 'mean', 'meanStdDev', 'merge', 'min', 'multiply', 'pow', 'rotate',
         'split', 'sqrt', 'subtract', 'LUT',
     ],
+    # Base class of ORB / BFMatcher: without it they cannot be constructed.
+    'Algorithm': [],
 }
 
 imgproc = {

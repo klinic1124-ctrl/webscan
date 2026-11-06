@@ -16,7 +16,9 @@ export function loadCv(): Promise<{ cv: CV }> {
     cached = (async () => {
       // Static import on purpose: the module object has a `then` method, so a
       // dynamic import() would try to resolve it as a promise and hang.
-      const cv: CV = cvModule;
+      // Newer Emscripten builds (the slim one) export a real Promise of the
+      // module; older ones (npm) export the module itself, initialising.
+      const cv: CV = cvModule instanceof Promise ? await cvModule : cvModule;
       if (!cv.Mat) {
         await new Promise<void>((resolve) => {
           // Chain, never replace: OpenCV.js may rely on its own hook, and

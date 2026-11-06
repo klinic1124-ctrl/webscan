@@ -25,4 +25,8 @@ emcmake python3 "$work/opencv/platforms/js/build_js.py" "$work/build" \
   -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF -DBUILD_EXAMPLES=OFF
 mkdir -p "$repo/vendor/opencv"
 cp "$work/build/bin/opencv.js" "$repo/vendor/opencv/opencv.js"
+# Same fix as the npm package: the wrapper assigns an undeclared global,
+# which throws in strict-mode (ES module) code.
+sed -i 's/^    Module = {};$/    var Module = {};/' "$repo/vendor/opencv/opencv.js"
+grep -q 'var Module = {};' "$repo/vendor/opencv/opencv.js"
 ls -l "$repo/vendor/opencv/opencv.js"

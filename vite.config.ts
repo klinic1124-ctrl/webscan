@@ -62,6 +62,8 @@ export default defineConfig({
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 12000,
+    // The slim OpenCV.js is CommonJS/UMD like the npm one; convert it too.
+    commonjsOptions: { include: [/node_modules/, /vendor[\\/]opencv/] },
   },
   test: {
     environment: 'node',
