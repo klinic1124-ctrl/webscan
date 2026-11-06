@@ -12,11 +12,14 @@
   },
   "dependencies": {
     "@techstark/opencv-js": "^4.12.0-release.1",
+    "@tesseract.js-data/eng": "^1.0.0",
+    "@tesseract.js-data/kor": "^1.0.0",
     "comlink": "^4.4.2",
     "idb": "^8.0.3",
     "pdf-lib": "^1.17.1",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

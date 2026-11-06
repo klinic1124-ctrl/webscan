@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import { OCR_VERSION } from '../lib/ocr';
 import { buildPdf, type PdfPageSize } from '../lib/pdf';
+import { recognizePage } from '../ocr';
 import type { DocRecord, PageRecord, Store } from '../lib/store';
 import { canShareFiles, downloadBlob, isEmbedded, extFor, fmtBytes, MODE_NAME, safeFileName, shareFiles, useObjectUrl } from '../ui';
 
@@ -10,13 +12,29 @@ interface Props {
   revision: number;
   busy: boolean;
   engineReady: boolean;
-  run: <T>(label: string, fn: () => Promise<T>) => Promise<T | undefined>;
+  run: <T>(label: string, fn: (status: (label: string) => void) => Promise<T>) => Promise<T | undefined>;
   onBack: () => void;
   onImport: (files: File[], fromCamera: boolean) => void;
   onEditPage: (page: PageRecord) => void;
   onError: (msg: string) => void;
   /** Opens the live camera (when the browser supports it). */
   onCamera?: () => void;
+}
+
+const OCR_PREF = 'scanner.pdfOcr';
+function readPref(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+function writePref(key: string, on: boolean) {
+  try {
+    localStorage.setItem(key, on ? '1' : '0');
+  } catch {
+    /* private mode: not remembered */
+  }
 }
 
 const SIZES: { id: PdfPageSize; label: string }[] = [
@@ -31,6 +49,7 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
   const [name, setName] = useState('');
   const [pageSize, setPageSize] = useState<PdfPageSize>('auto');
   const [pdf, setPdf] = useState<File | null>(null);
+  const [ocr, setOcr] = useState(() => readPref(OCR_PREF));
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -67,13 +86,30 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
     });
 
   const makePdf = () =>
-    void run('PDF 만드는 중', async () => {
+    void run('PDF 만드는 중', async (status) => {
+      const done = pages.slice();
+      if (ocr) {
+        for (let i = 0; i < done.length; i++) {
+          const p = done[i];
+          if (p.ocr?.v === OCR_VERSION) continue;
+          const label = `글자 읽는 중 ${i + 1}/${done.length}쪽`;
+          status(label);
+          const result = await recognizePage(p.result, p.width, p.height, (stage, f) =>
+            status(stage === 'loading' ? `글자 인식 준비 중 (처음 한 번 약 8 MB)` : `${label} · ${Math.round(f * 100)}%`),
+          );
+          await store.setPageOcr(p.id, result);
+          done[i] = { ...p, ocr: result };
+        }
+        setPages(done);
+        status('PDF 만드는 중');
+      }
       const inputs = await Promise.all(
-        pages.map(async (p) => ({
+        done.map(async (p) => ({
           bytes: new Uint8Array(await p.result.arrayBuffer()),
           type: p.result.type,
           width: p.width,
           height: p.height,
+          ocr: ocr ? p.ocr : undefined,
         })),
       );
       const bytes = await buildPdf(inputs, { pageSize, title: doc?.name });
@@ -107,6 +143,7 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
   }
 
   const images = pages.length ? imageFiles() : [];
+  const ocrReady = pages.filter((p) => p.ocr?.v === OCR_VERSION).length;
   const canShareImages = images.length > 0 && canShareFiles(images);
   const canSharePdf = !!pdf && canShareFiles([pdf]);
   const needsCheck = pages.filter((p) => p.detect === 'guess' || p.detect === 'none').length;
@@ -224,6 +261,26 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
             </div>
             <span className="hint">자동: 페이지 비율이 A4나 Letter와 같으면 그 크기로, 아니면 사진 비율 그대로 만듭니다.</span>
           </div>
+          <label className="check">
+            <input
+              id="pdf-ocr"
+              type="checkbox"
+              checked={ocr}
+              disabled={busy}
+              onChange={(e) => {
+                setOcr(e.target.checked);
+                writePref(OCR_PREF, e.target.checked);
+                setPdf(null);
+              }}
+            />
+            글자 검색·복사 가능한 PDF (OCR, 한국어·영어)
+          </label>
+          {ocr && (
+            <p className="hint">
+              기기 안에서 글자를 읽습니다. 처음 한 번 인식 엔진(약 8 MB)을 받고, 한 번 읽은 페이지는 다시 읽지 않습니다.
+              {ocrReady < pages.length && ` 읽을 페이지 ${pages.length - ocrReady}쪽.`}
+            </p>
+          )}
           {!pdf ? (
             <button className="btn primary wide" onClick={makePdf} disabled={busy}>
               PDF 만들기 ({pages.length}쪽)

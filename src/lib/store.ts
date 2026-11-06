@@ -4,6 +4,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { AspectChoice, Quad } from './geometry';
 import type { Mode, ResolvedMode } from './cv/pipeline';
+import type { OcrPage } from './textLayer';
 
 export interface DocRecord {
   id: string;
@@ -39,6 +40,11 @@ export interface PageRecord {
   extras?: ExtraShotRecord[];
   /** Reflection detection sensitivity chosen for this page (0..100). */
   glareSensitivity?: number;
+  /**
+   * Recognised text of \`result\` (OCR), kept so PDFs need not read the page
+   * again. Dropped whenever the page is saved again (new result image).
+   */
+  ocr?: OcrPage & { v: number };
 }
 
 export interface ExtraShotRecord {
@@ -190,6 +196,15 @@ export function createStore(dbName = 'scanner') {
       await tx.objectStore('docs').put({ ...doc, pageIds, updatedAt: Date.now() });
       await tx.done;
       return rec;
+    },
+
+    /** Stores the OCR result of a page without touching anything else. */
+    async setPageOcr(id: string, ocr: OcrPage & { v: number }): Promise<void> {
+      const d = await db();
+      const tx = d.transaction('pages', 'readwrite');
+      const p = await tx.store.get(id);
+      if (p) await tx.store.put({ ...p, ocr });
+      await tx.done;
     },
 
     async deletePage(docId: string, pageId: string): Promise<void> {

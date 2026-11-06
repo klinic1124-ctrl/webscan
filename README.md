@@ -5,7 +5,8 @@
 - 개발 계획서: [`docs/scanner-plan.html`](docs/scanner-plan.html)
 - 0단계 검증 보고서: [`docs/phase0.md`](docs/phase0.md)
 - 1단계(MVP) 기록: [`docs/phase1.md`](docs/phase1.md)
-- 2단계 기록(반사광 지우기): [`docs/phase2.md`](docs/phase2.md)
+- 2단계 기록(반사광 지우기, 실시간 카메라, 엔진 경량화): [`docs/phase2.md`](docs/phase2.md)
+- 3단계 기록(글자 검색 PDF): [`docs/phase3.md`](docs/phase3.md)
 
 ## 기능
 
@@ -15,6 +16,7 @@
 - 반사광 지우기: 같은 페이지를 다른 각도로 1~2장 더 찍어 반사 부분만 채워 합성
 - 여러 페이지 문서: 순서 변경, 삭제, 다시 맞추기(원본 사진을 보관하므로 화질 손실 없음)
 - PDF(자동 · A4 · Letter) 또는 이미지로 공유 · 저장
+- 글자 검색·복사 가능한 PDF: 기기 안에서 한국어·영어 OCR (처음 쓸 때 약 8 MB를 받음)
 - 기기 안 보관함(IndexedDB), 홈 화면 설치, 오프라인 동작
 
 ## 실행
@@ -47,6 +49,9 @@ src/
   components/Metrics.tsx     측정 패널 (개발용)
   lib/store.ts               IndexedDB 보관함
   lib/pdf.ts                 PDF 생성 (pdf-lib)
+  lib/textLayer.ts           PDF의 보이지 않는 글자층 (OCR 결과)
+  lib/ocr.ts                 OCR 결과 정리 (단어 상자, 한국어 띄어쓰기 복원)
+  ocr.ts                     브라우저 OCR (Tesseract.js, 앱이 직접 제공하는 모델)
   scanner.ts                 워커 클라이언트, 사진 해독
   worker/scanner.worker.ts   OpenCV 처리 워커 (Comlink)
   lib/geometry.ts            순수 기하 계산 (꼭짓점 정렬, 직선 맞춤, 종횡비 추정)

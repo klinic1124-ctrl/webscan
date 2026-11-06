@@ -2,6 +2,7 @@
 // re-compression); black & white PNG pages are embedded losslessly.
 import { PDFDocument } from 'pdf-lib';
 import { nearestPaper, PAPER } from './geometry';
+import { drawTextLayer, embedGlyphlessFont, type OcrPage } from './textLayer';
 
 export type PdfPageSize = 'auto' | 'a4' | 'letter';
 
@@ -10,6 +11,8 @@ export interface PdfPageInput {
   type: string; // image/jpeg | image/png
   width: number;
   height: number;
+  /** Recognised text, drawn as an invisible searchable layer. */
+  ocr?: OcrPage;
 }
 
 const MM = 72 / 25.4;
@@ -45,6 +48,7 @@ export async function buildPdf(pages: PdfPageInput[], opts: { pageSize: PdfPageS
   if (opts.title) pdf.setTitle(opts.title);
   pdf.setCreator('웹 문서 스캐너');
   pdf.setProducer('웹 문서 스캐너 (pdf-lib)');
+  const font = pages.some((p) => p.ocr?.lines.length) ? embedGlyphlessFont(pdf) : null;
   for (const p of pages) {
     const img = p.type === 'image/png' ? await pdf.embedPng(p.bytes) : await pdf.embedJpg(p.bytes);
     const [pw, ph] = pageSizeFor(opts.pageSize, p.width, p.height);
@@ -53,7 +57,9 @@ export async function buildPdf(pages: PdfPageInput[], opts: { pageSize: PdfPageS
     const s = Math.min(pw / p.width, ph / p.height);
     const w = p.width * s;
     const h = p.height * s;
-    page.drawImage(img, { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
+    const place = { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h };
+    page.drawImage(img, place);
+    if (font && p.ocr?.lines.length) drawTextLayer(page, font, p.ocr, place);
   }
   return pdf.save();
 }

@@ -76,11 +76,11 @@ export function App() {
     window.scrollTo({ top: 0 });
   }, [view.name]);
 
-  const run = useCallback(async <T,>(label: string, fn: () => Promise<T>): Promise<T | undefined> => {
+  const run = useCallback(async <T,>(label: string, fn: (status: (label: string) => void) => Promise<T>): Promise<T | undefined> => {
     setBusy(label);
     setError(null);
     try {
-      return await fn();
+      return await fn(setBusy);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       return undefined;

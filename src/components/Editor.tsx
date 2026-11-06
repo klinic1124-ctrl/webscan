@@ -48,7 +48,7 @@ interface Props {
   session: EditSession;
   engine: EngineInfo | null;
   busy: boolean;
-  run: <T>(label: string, fn: () => Promise<T>) => Promise<T | undefined>;
+  run: <T>(label: string, fn: (status: (label: string) => void) => Promise<T>) => Promise<T | undefined>;
   onCancel: () => void;
   onSave: (page: SavedPage) => Promise<void>;
 }

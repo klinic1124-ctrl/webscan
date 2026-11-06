@@ -7,7 +7,7 @@ interface Props {
   store: Store;
   busy: boolean;
   engineReady: boolean;
-  run: <T>(label: string, fn: () => Promise<T>) => Promise<T | undefined>;
+  run: <T>(label: string, fn: (status: (label: string) => void) => Promise<T>) => Promise<T | undefined>;
   onOpen: (docId: string) => void;
   onImport: (files: File[], fromCamera: boolean) => void;
   onSample: (kind: SampleKind) => void;
