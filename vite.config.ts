@@ -86,7 +86,9 @@ export default defineConfig({
         // The OpenCV worker (WASM embedded, ~6 MB slim / ~11 MB npm) must work offline.
         maximumFileSizeToCacheInBytes: 16 * 1024 * 1024,
         // OCR (~8 MB) is optional: fetched on first use, then kept.
-        globIgnores: ['ocr/**'],
+        globIgnores: ['ocr/**', 'ocr-test/**'],
+        // Real pages and files there, not the app shell.
+        navigateFallbackDenylist: [/\/ocr\//, /\/ocr-test\//],
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.includes('/ocr/'),

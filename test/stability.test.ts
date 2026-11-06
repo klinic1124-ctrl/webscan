@@ -21,7 +21,8 @@ describe('StabilityTracker', () => {
     const s = new StabilityTracker({ holdMs: 900 });
     s.push(0, page());
     s.push(600, page());
-    expect(s.push(700, page(0.05)).progress).toBe(0);
+    s.push(650, page(0.05));
+    expect(s.push(700, page(0.05)).progress).toBe(0); // second frame away: moved
     expect(s.push(1700, page(0.05)).ready).toBe(true);
   });
 
@@ -34,11 +35,40 @@ describe('StabilityTracker', () => {
     expect(s.push(2000, page()).ready).toBe(false); // still the same page
     // next page slid in at a clearly different place
     s.push(2100, page(0.15));
+    s.push(2150, page(0.15)); // second frame there: it moved
     expect(s.push(2700, page(0.15)).ready).toBe(true);
     s.markCaptured(page(0.15));
     // page removed from view, then a new one at the same spot
     s.push(2800, null);
-    s.push(2900, page(0.15));
-    expect(s.push(3500, page(0.15)).ready).toBe(true);
+    s.push(3200, null); // gone long enough
+    s.push(3300, page(0.15));
+    expect(s.push(4300, page(0.15)).ready).toBe(true);
+  });
+
+  it('a slow drift is movement, even when each frame moves little (fast detection)', () => {
+    const s = new StabilityTracker({ holdMs: 900, moveTol: 0.015 });
+    // 50 ms frames, 0.004 per frame: each step is under the tolerance,
+    // but over 900 ms the page travels 0.07.
+    let ready = false;
+    for (let t = 0, x = 0; t <= 1500; t += 50, x += 0.004) ready ||= s.push(t, page(x)).ready;
+    expect(ready).toBe(false);
+  });
+
+  it('small jitter around one place still captures', () => {
+    const s = new StabilityTracker({ holdMs: 900 });
+    let ready = false;
+    for (let t = 0, i = 0; t <= 1000; t += 50, i++) ready ||= s.push(t, page(i % 2 ? 0.006 : -0.006)).ready;
+    expect(ready).toBe(true);
+  });
+
+  it('ignores a single odd outline and brief missed detections', () => {
+    const s = new StabilityTracker({ holdMs: 900 });
+    s.push(0, page());
+    s.push(300, page());
+    s.push(350, page(0.2)); // one wrong detection
+    s.push(400, null); // and a miss
+    s.push(450, null);
+    expect(s.push(500, page()).progress).toBeCloseTo(500 / 900, 2);
+    expect(s.push(950, page()).ready).toBe(true);
   });
 });

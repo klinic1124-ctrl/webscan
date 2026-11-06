@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCR PDF 시험</title>
+<style>
+  body { font: 17px/1.5 -apple-system, system-ui, sans-serif; margin: 0; padding: 20px 16px; background: #f3f5f5; color: #1b2424; }
+  a { display: block; background: #fff; border: 1px solid #d5dddd; border-radius: 12px; padding: 14px 16px; margin: 10px 0; color: #0f7f86; text-decoration: none; font-weight: 600; }
+  span { display: block; color: #5b6b6b; font-weight: 400; font-size: 14px; }
+  @media (prefers-color-scheme: dark) { body { background: #111717; color: #e6eded; } a { background: #1b2424; border-color: #2c3838; color: #5fc7cd; } span { color: #9aabab; } }
+</style>
+</head>
+<body>
+<h1>OCR PDF 시험</h1>
+<p>같은 페이지를 다섯 가지 방식으로 만든 PDF입니다. 각각 열어서 글자를 길게 눌러 선택이 되는지, 검색이 되는지 봐 주세요. 파일 앱에 저장해서 열어도 됩니다.</p>
+<a href="a-tesseract.pdf">A<span>Tesseract가 직접 만든 PDF (기준)</span></a>
+<a href="b-current.pdf">B<span>지난번 앱 방식</span></a>
+<a href="c-tessfont.pdf">C<span>B + Tesseract 글꼴</span></a>
+<a href="d-tessfont-cmap.pdf">D<span>C + Tesseract 글자 대응표</span></a>
+<a href="e-tess-all.pdf">E<span>D + Tesseract 글자 배치 (지금 앱 방식)</span></a>
+</body>
+</html>

@@ -5,11 +5,17 @@
 // each character is written as its UTF-16 code unit, every code maps to the
 // one blank glyph (CIDToGIDMap) and back to the same Unicode value
 // (ToUnicode), so any script (Korean included) can be searched and copied
-// without embedding a real CJK font. Same approach as Tesseract's own PDFs.
+// without embedding a real CJK font.
+//
+// Font, font dictionaries, ToUnicode map and text layout follow Tesseract's
+// own PDF output as closely as possible (its pdf.ttf glyphless font,
+// Apache-2.0), since those PDFs are known to work in strict viewers such as
+// iOS PDFKit.
 import {
   beginText,
   endText,
   PDFDocument,
+  PDFArray,
   PDFHexString,
   PDFString,
   type PDFPage,
@@ -18,7 +24,9 @@ import {
   setFontAndSize,
   setTextMatrix,
   setTextRenderingMode,
-  showText,
+  moveText,
+  PDFOperator,
+  PDFOperatorNames,
   TextRenderingMode,
 } from 'pdf-lib';
 
@@ -39,10 +47,9 @@ export interface OcrPage {
   lines: OcrWord[][];
 }
 
-// Tiny TrueType font: .notdef and one box glyph (never painted: render
-// mode 3; the box gives viewers a character cell to highlight), 500/1000,
-// ascent 1000 / descent 0 so a glyph box is exactly the font size tall.
-const GLYPHLESS_TTF_B64 = 'AAEAAAAKAIAAAwAgT1MvMkT/RUAAAAEoAAAAYGNtYXAADABzAAABkAAAADRnbHlmKOMxFAAAAcwAAAAYaGVhZC8w+MgAAACsAAAANmhoZWEF3QH2AAAA5AAAACRobXR4AfQAAAAAAYgAAAAGbG9jYQAMAAAAAAHEAAAABm1heHAABAAGAAABCAAAACBuYW1lqWij/wAAAeQAAABmcG9zdABOAAAAAAJMAAAAJgABAAAAAQAACCpxwV8PPPUAAwPoAAAAAOcTWgAAAAAA5xNaAAAAAAAB9APoAAAAAwACAAAAAAAAAAEAAAPoAAAAAAH0AAAAAAH0AAEAAAAAAAAAAAAAAAAAAAABAAEAAAACAAQAAQAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAwH0AZAABQAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAPz8/PwAAACAAIAPoAAAAAAPoAAAAAAAAAAAAAAAAAAAAAAAgAAAB9AAAAAAAAAAAAAIAAAADAAAAFAADAAEAAAAUAAQAIAAAAAQABAABAAAAIP//AAAAIP///+EAAQAAAAAAAAAAAAwAAAABAAAAAAH0A+gAAwAAMREhEQH0A+j8GAAAAAQANgABAAAAAAABAAkAAAABAAAAAAACAAcACQADAAEECQABABIAEAADAAEECQACAA4AIkdseXBoTGVzc1JlZ3VsYXIARwBsAHkAcABoAEwAZQBzAHMAUgBlAGcAdQBsAGEAcgAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAEoAAA==';
+// Tesseract's pdf.ttf (572 bytes, Apache-2.0): .notdef and one empty glyph
+// with an advance of half the font size.
+const GLYPHLESS_TTF_B64 = 'AAEAAAAKAIAAAwAgT1MvMlbeyJQAAAEoAAAAYGNtYXAACgA0AAABkAAAAB5nbHlmFSJBJAAAAbgAAAAYaGVhZAt48WUAAACsAAAANmhoZWEMAgQCAAAA5AAAACRobXR4BAAAAAAAAYgAAAAIbG9jYQAMAAAAAAGwAAAABm1heHAABAAFAAABCAAAACBuYW1l8usW2gAAAdAAAABLcG9zdAABAAEAAAIcAAAAIAABAAAAAQAAsJRxEF8PPPUEBwgAAAAAAM+a/G4AAAAA1MOn8gAAAAAEAAgAAAAAEAACAAAAAAAAAAEAAAgA//8AAAQAAAAAAAQAAAEAAAAAAAAAAAAAAAAAAAACAAEAAAACAAQAAQAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAwAAAZAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAAQABAAAAAAAAAAAAAAAAAAAAAAAAAAAAR09PRwBAAAAAAAAB//8AAAABAAGAAAAAAAAAAAAAAAAAAAABAAAAAAAABAAAAAAAAAIAAQAAAAAAFAADAAAAAAAUAAYACgAAAAAAAAAAAAAAAAAMAAAAAQAAAAAEAAgAAAMAADEhESEEAPwACAAAAAADACoAAAADAAAABQAWAAAAAQAAAAAABQALABYAAwABBAkABQAWAAAAVgBlAHIAcwBpAG8AbgAgADEALgAwVmVyc2lvbiAxLjAAAAEAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAA=';
 const ADVANCE = 0.5; // glyph advance as a fraction of the font size
 
 function b64(s: string): Uint8Array {
@@ -53,23 +60,14 @@ function b64(s: string): Uint8Array {
 }
 
 function toUnicodeCMap(): string {
-  // One range per high byte: a bfrange may not cross a high-byte boundary.
-  const ranges: string[] = [];
-  for (let hi = 0; hi < 256; hi++) {
-    const h = hi.toString(16).padStart(2, '0').toUpperCase();
-    ranges.push(`<${h}00> <${h}FF> <${h}00>`);
-  }
-  const chunks: string[] = [];
-  for (let i = 0; i < ranges.length; i += 100) {
-    const part = ranges.slice(i, i + 100);
-    chunks.push(`${part.length} beginbfrange\n${part.join('\n')}\nendbfrange`);
-  }
+  // Every 2-byte code is its own UTF-16 value (written as Tesseract does).
+  const chunks = ['1 beginbfrange\n<0000> <FFFF> <0000>\nendbfrange'];
   return [
     '/CIDInit /ProcSet findresource begin',
     '12 dict begin',
     'begincmap',
     '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def',
-    '/CMapName /Adobe-Identity-UCS def',
+    '/CMapName /Adobe-Identify-UCS def',
     '/CMapType 2 def',
     '1 begincodespacerange',
     '<0000> <FFFF>',
@@ -95,7 +93,7 @@ export function embedGlyphlessFont(pdf: PDFDocument): PDFRef {
       FontBBox: [0, 0, 500, 1000],
       ItalicAngle: 0,
       Ascent: 1000,
-      Descent: 0,
+      Descent: -1,
       CapHeight: 1000,
       StemV: 80,
       FontFile2: fontFile,
@@ -155,22 +153,26 @@ export function drawTextLayer(
   const sy = place.height / ocr.h;
   const name = page.node.newFontDictionaryKey('OCR');
   page.node.setFontDictionary(name, font);
+  // Laid out the way Tesseract writes its PDFs: one text matrix per line,
+  // then relative moves (Td) word to word, each word as a TJ array ending
+  // in a space.
   const ops = [beginText(), setTextRenderingMode(TextRenderingMode.Invisible)];
   for (const line of ocr.lines) {
+    let px = 0;
+    let py = 0;
     line.forEach((wd, i) => {
-      // A space after each word but the last keeps words apart when copied.
-      const text = i < line.length - 1 ? `${wd.t} ` : wd.t;
-      const hex = utf16Hex(text);
-      if (!hex) return;
+      const hex = utf16Hex(`${wd.t} `);
+      if (hex.length <= 4) return;
       const n = hex.length / 4;
       const size = Math.max(1, (wd.y1 - wd.y0) * sy);
       const width = Math.max(1, (wd.x1 - wd.x0) * sx) * (n / Math.max(1, wd.t.length));
-      ops.push(
-        setFontAndSize(name, size),
-        setCharacterSqueeze((100 * width) / (n * ADVANCE * size)),
-        setTextMatrix(1, 0, 0, 1, place.x + wd.x0 * sx, place.y + (ocr.h - wd.y1) * sy),
-        showText(PDFHexString.of(hex)),
-      );
+      const x = place.x + wd.x0 * sx;
+      const y = place.y + (ocr.h - wd.y1) * sy;
+      if (i === 0) ops.push(setTextMatrix(1, 0, 0, 1, x, y));
+      else ops.push(moveText(x - px, y - py));
+      px = x;
+      py = y;
+      ops.push(setFontAndSize(name, size), setCharacterSqueeze((100 * width) / (n * ADVANCE * size)), PDFOperator.of(PDFOperatorNames.ShowTextAdjusted, [PDFArray.withContext(page.doc.context)].map((a) => (a.push(PDFHexString.of(hex)), a))));
     });
   }
   ops.push(endText());

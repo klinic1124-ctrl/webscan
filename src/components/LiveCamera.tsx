@@ -1,7 +1,7 @@
 import { transfer } from 'comlink';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Quad } from '../lib/geometry';
-import { StabilityTracker } from '../lib/stability';
+import { maxCornerShift, StabilityTracker } from '../lib/stability';
 import { scanner } from '../scanner';
 
 interface Props {
@@ -23,6 +23,10 @@ type Status = 'starting' | 'live' | 'error';
 
 const FRAME_LONG_SIDE = 640;
 const DETECT_INTERVAL = 90; // ms between detections (after the previous one finished)
+/** The drawn outline follows detections smoothly when they are this close (frame fractions)… */
+const SMOOTH_NEAR = 0.05;
+/** …and stays up through missed detections this short (ms). */
+const HOLD_OUTLINE_MS = 350;
 
 export function liveCameraSupported(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia && window.isSecureContext;
@@ -121,6 +125,8 @@ export function LiveCamera({ continuous: startContinuous, saved, onShot, onNativ
     let stop = false;
     let timer = 0;
     const canvas = document.createElement('canvas');
+    let shown: Quad | null = null;
+    let seenAt = 0;
     const tick = async () => {
       const v = videoRef.current;
       if (stop || !v) return;
@@ -136,8 +142,18 @@ export function LiveCamera({ continuous: startContinuous, saved, onShot, onNativ
           const usable = d.found || d.guess;
           const q = usable ? (d.quad.map((p) => ({ x: p.x / f, y: p.y / f })) as Quad) : null;
           quadRef.current = q;
-          setQuad(q);
-          setGuess(!d.found && d.guess);
+          // Drawn outline: eased towards nearby detections (no jitter), jumps
+          // to far ones, and survives a brief miss without blinking.
+          const now = performance.now();
+          if (q) {
+            const near = shown && maxCornerShift(normalize(q, v.videoWidth, v.videoHeight), normalize(shown, v.videoWidth, v.videoHeight)) < SMOOTH_NEAR;
+            shown = near ? (shown!.map((p, i) => ({ x: p.x + (q[i].x - p.x) * 0.5, y: p.y + (q[i].y - p.y) * 0.5 })) as Quad) : q;
+            seenAt = now;
+            setGuess(!d.found && d.guess);
+          } else if (now - seenAt > HOLD_OUTLINE_MS) {
+            shown = null;
+          }
+          setQuad(shown);
           // Only a confident outline counts towards auto-capture.
           const st = trackerRef.current.push(performance.now(), d.found && q ? normalize(q, v.videoWidth, v.videoHeight) : null);
           setProgress(st.progress);
