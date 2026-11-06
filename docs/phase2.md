@@ -267,4 +267,5 @@ Chrome의 가짜 카메라에 합성 영상을 넣었다(`test/make-y4m.test.ts`
 
 - 자동 테스트 76개 통과, 브라우저 종단 테스트(보관함·PDF, 반사광 합성, 실시간 카메라) 통과.
 - SIMD 필요: iOS 16.4 이상 Safari, Chrome 91 이상. 더 오래된 iOS는 지원하지 않는다.
+- 실기기 확인 (iPhone, 빌드 7b3e233): 촬영 · 반사광 합성 · PDF 저장 모두 정상.
 - 새 OpenCV 함수를 쓰게 되면 `scripts/opencv/scanner.config.py`에 추가하고 워크플로를 다시 실행한다. 빌드는 `vendor/opencv/opencv.candidate.js`로 커밋되며, 테스트 후 `opencv.js`로 이름을 바꿔 켠다.
