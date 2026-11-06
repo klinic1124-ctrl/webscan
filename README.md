@@ -31,6 +31,8 @@ npm run build      # dist/ 에 정적 파일 생성 → 아무 정적 호스팅�
 디버그 이미지 출력: `SCAN_DEBUG=1 npx vitest run test/debug-output.test.ts` → `test-output/`
 12MP 속도 측정: `SCAN_BENCH=1 npx vitest run test/bench.test.ts`
 
+경량 OpenCV.js: `scripts/opencv/build.sh`(Emscripten 필요) 또는 GitHub Actions의 "Slim OpenCV.js" 워크플로로 만든 `opencv.js`를 `vendor/opencv/`에 두면, 앱과 테스트가 npm 전체 빌드 대신 자동으로 그것을 씁니다. 필요한 함수 목록은 `scripts/opencv/scanner.config.py`에 있습니다.
+
 ## 구조
 
 ```

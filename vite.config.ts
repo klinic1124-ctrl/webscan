@@ -3,6 +3,12 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+
+// A slim OpenCV.js built by scripts/opencv/build.sh replaces the full npm
+// build when present (same API, only the functions the scanner uses).
+const slimCv = fileURLToPath(new URL('./vendor/opencv/opencv.js', import.meta.url));
+const cvAlias: Record<string, string> = existsSync(slimCv) ? { '@techstark/opencv-js': slimCv } : {};
 
 // Build ID shown in the app and in measurement reports, so a report can be
 // matched to the code that produced it (git commit + build date).
@@ -17,6 +23,7 @@ function buildId(): string {
 }
 
 export default defineConfig({
+  resolve: { alias: cvAlias },
   plugins: [
     react(),
     VitePWA({

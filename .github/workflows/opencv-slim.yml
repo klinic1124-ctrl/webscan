@@ -1,0 +1,23 @@
+# Manual: Actions → "Slim OpenCV.js" → Run workflow. Download the
+# "opencv-slim" artifact and commit its opencv.js to vendor/opencv/.
+name: Slim OpenCV.js
+on:
+  workflow_dispatch:
+    inputs:
+      simd:
+        description: Build with WebAssembly SIMD
+        type: boolean
+        default: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+      - run: SIMD=${{ inputs.simd && '1' || '0' }} scripts/opencv/build.sh "$RUNNER_TEMP/ocv"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencv-slim
+          path: vendor/opencv/opencv.js
