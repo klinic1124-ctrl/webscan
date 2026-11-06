@@ -44,6 +44,12 @@ describe.skipIf(!hasPdftotext)('OCR text layer', () => {
       ],
       { pageSize: 'a4' },
     );
+    // Strict viewers (iOS) need the font's registry as plain bytes.
+    const raw = Buffer.from(bytes).toString('latin1');
+    expect(raw).toMatch(/\/Registry \(Adobe\)/);
+    expect(raw).toMatch(/\/Ordering \(Identity\)/);
+    expect(raw).not.toMatch(/\/ObjStm/);
+
     const dir = mkdtempSync(join(tmpdir(), 'ocr-'));
     const file = join(dir, 'a.pdf');
     writeFileSync(file, bytes);

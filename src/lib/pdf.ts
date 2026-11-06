@@ -61,5 +61,7 @@ export async function buildPdf(pages: PdfPageInput[], opts: { pageSize: PdfPageS
     page.drawImage(img, place);
     if (font && p.ocr?.lines.length) drawTextLayer(page, font, p.ocr, place);
   }
-  return pdf.save();
+  // Classic cross-reference table, no object streams: the most widely
+  // readable form (as Tesseract's own PDFs).
+  return pdf.save({ useObjectStreams: false });
 }

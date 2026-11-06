@@ -11,6 +11,7 @@ import {
   endText,
   PDFDocument,
   PDFHexString,
+  PDFString,
   type PDFPage,
   type PDFRef,
   setCharacterSqueeze,
@@ -109,7 +110,9 @@ export function embedGlyphlessFont(pdf: PDFDocument): PDFRef {
       Type: 'Font',
       Subtype: 'CIDFontType2',
       BaseFont: 'GlyphLessFont',
-      CIDSystemInfo: { Registry: PDFHexString.fromText('Adobe'), Ordering: PDFHexString.fromText('Identity'), Supplement: 0 },
+      // Plain byte strings: viewers compare them byte for byte (a UTF-16
+      // "Adobe" made iOS ignore the font and with it all the text).
+      CIDSystemInfo: { Registry: PDFString.of('Adobe'), Ordering: PDFString.of('Identity'), Supplement: 0 },
       FontDescriptor: descriptor,
       DW: 1000 * ADVANCE,
       CIDToGIDMap: cidToGid,

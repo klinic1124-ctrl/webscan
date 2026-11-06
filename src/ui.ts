@@ -88,9 +88,11 @@ export function canShareFiles(files: File[]): boolean {
 }
 
 /** Shares files through the system sheet. Returns false if cancelled or unsupported. */
-export async function shareFiles(files: File[], title: string): Promise<boolean> {
+export async function shareFiles(files: File[]): Promise<boolean> {
   try {
-    await navigator.share({ files, title });
+    // Files only: on iOS a title or text is saved as an extra .txt file
+    // next to them ("Save to Files").
+    await navigator.share({ files });
     return true;
   } catch (e) {
     if ((e as Error).name === 'AbortError') return false;

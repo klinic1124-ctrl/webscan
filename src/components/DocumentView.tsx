@@ -49,6 +49,8 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
   const [name, setName] = useState('');
   const [pageSize, setPageSize] = useState<PdfPageSize>('auto');
   const [pdf, setPdf] = useState<File | null>(null);
+  /** Words in the PDF's text layer (null: made without OCR). */
+  const [pdfWords, setPdfWords] = useState<number | null>(null);
   const [ocr, setOcr] = useState(() => readPref(OCR_PREF));
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
@@ -113,6 +115,7 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
         })),
       );
       const bytes = await buildPdf(inputs, { pageSize, title: doc?.name });
+      setPdfWords(ocr ? inputs.reduce((n, p) => n + (p.ocr?.lines.reduce((m, l) => m + l.length, 0) ?? 0), 0) : null);
       setPdf(new File([bytes as BlobPart], `${safeFileName(doc?.name ?? 'scan')}.pdf`, { type: 'application/pdf' }));
     });
 
@@ -121,7 +124,7 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
 
   const share = async (files: File[]) => {
     try {
-      await shareFiles(files, doc?.name ?? '스캔');
+      await shareFiles(files);
     } catch {
       onError('공유하지 못했습니다. 저장 버튼을 사용해 주세요.');
     }
@@ -290,6 +293,11 @@ export function DocumentView({ store, docId, revision, busy, engineReady, run, o
               <p>
                 <strong>{pdf.name}</strong> <span className="mono hint">{fmtBytes(pdf.size)}</span>
               </p>
+              {pdfWords !== null && (
+                <p className="hint" id="pdf-ocr-info">
+                  {pdfWords > 0 ? `글자 검색 가능 · 단어 ${pdfWords.toLocaleString()}개 인식` : '인식된 글자가 없습니다'}
+                </p>
+              )}
               <div className="row">
                 {canSharePdf && (
                   <button className="btn primary" onClick={() => void share([pdf])}>
