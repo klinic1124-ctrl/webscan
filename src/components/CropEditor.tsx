@@ -81,16 +81,34 @@ export function CropEditor({ previewUrl, width, height, quad, onChange }: Props)
     canvas.width = LOUPE_PX * dpr;
     canvas.height = LOUPE_PX * dpr;
     const ctx = canvas.getContext('2d')!;
-    const nat = img.naturalWidth / width; // preview px per source px
+    // Work in preview-image pixels (the <img> may be a downscaled copy; use
+    // separate x/y factors because each side was rounded on its own).
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    const fx = iw / width;
+    const fy = ih / height;
     const span = (LOUPE_PX / LOUPE_ZOOM) * scale; // source px shown across the loupe
-    const sx = (active.x - span / 2) * nat;
-    const sy = (active.y - span / 2) * nat;
+    const sw = span * fx;
+    const sh = span * fy;
+    const sx = active.x * fx - sw / 2;
+    const sy = active.y * fy - sh / 2;
+    const kx = canvas.width / sw; // canvas px per preview px
+    const ky = canvas.height / sh;
     ctx.fillStyle = '#222';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, sx, sy, span * nat, span * nat, 0, 0, canvas.width, canvas.height);
+    // Clip the source rectangle to the image ourselves: near the photo's edge
+    // it sticks out, and Safari then stretches the visible part over the
+    // whole loupe instead of leaving the outside empty, which shifts the view
+    // away from the crosshair.
+    const x0 = Math.max(0, sx);
+    const y0 = Math.max(0, sy);
+    const x1 = Math.min(iw, sx + sw);
+    const y1 = Math.min(ih, sy + sh);
+    if (x1 > x0 && y1 > y0) {
+      ctx.drawImage(img, x0, y0, x1 - x0, y1 - y0, (x0 - sx) * kx, (y0 - sy) * ky, (x1 - x0) * kx, (y1 - y0) * ky);
+    }
     // adjacent edges
-    const k = canvas.width / span;
-    const toL = (p: Point) => [(p.x - active.x + span / 2) * k, (p.y - active.y + span / 2) * k] as const;
+    const toL = (p: Point) => [(p.x * fx - sx) * kx, (p.y * fy - sy) * ky] as const;
     const i = drag!.index;
     ctx.strokeStyle = 'rgba(255,255,255,.95)';
     ctx.lineWidth = 1.5 * dpr;
@@ -108,7 +126,7 @@ export function CropEditor({ previewUrl, width, height, quad, onChange }: Props)
     ctx.moveTo(c, c - 10 * dpr);
     ctx.lineTo(c, c + 10 * dpr);
     ctx.stroke();
-  }, [active, drag, quad, scale, width]);
+  }, [active, drag, quad, scale, width, height]);
 
   const pts = quad.map((p) => `${p.x},${p.y}`).join(' ');
   const r = HANDLE_PX * scale;
