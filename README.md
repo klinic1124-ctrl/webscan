@@ -31,6 +31,12 @@ npm run build      # dist/ 에 정적 파일 생성 → 아무 정적 호스팅�
 
 카메라 촬영 버튼은 HTTPS(또는 localhost)에서 동작합니다.
 
+## 배포 (Cloudflare Pages)
+
+- 저장소: `klinic1124-ctrl/webscan`, 브랜치 `main` (푸시하면 자동 배포)
+- 프레임워크 프리셋: 없음(또는 Vite), 빌드 명령 `npm run build`, 출력 폴더 `dist`
+- 보관함(IndexedDB)은 주소별로 기기에 저장되므로, 앱 주소가 바뀌면 이전 주소의 문서는 새 주소에서 보이지 않는다.
+
 디버그 이미지 출력: `SCAN_DEBUG=1 npx vitest run test/debug-output.test.ts` → `test-output/`
 12MP 속도 측정: `SCAN_BENCH=1 npx vitest run test/bench.test.ts`
 
